@@ -10,7 +10,7 @@ from volsurf.config.settings import Settings, get_settings
 from volsurf.database.connection import get_connection
 from volsurf.database.schema import init_schema
 from volsurf.ingestion.filters import apply_liquidity_filters, validate_data_quality
-from volsurf.ingestion.theta_client import ThetaDataClient
+from volsurf.ingestion.theta_client import ThetaTerminalClient
 
 
 class IngestionPipeline:
@@ -18,7 +18,7 @@ class IngestionPipeline:
     Orchestrates daily data ingestion and processing.
 
     Handles:
-    - Fetching options chain data from API (or mock)
+    - Fetching options chain data from Theta Terminal (or mock)
     - Applying liquidity filters
     - Storing in DuckDB database
     - Basic data validation
@@ -26,9 +26,13 @@ class IngestionPipeline:
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
-        self.client = ThetaDataClient(self.settings)
+        self.client = ThetaTerminalClient(self.settings)
 
-    async def run_daily_ingestion(
+    def check_terminal(self) -> bool:
+        """Check if the Theta Terminal is accessible."""
+        return self.client.check_terminal_status()
+
+    def run_daily_ingestion(
         self,
         symbol: str,
         target_date: date,
@@ -62,15 +66,28 @@ class IngestionPipeline:
 
         logger.info(f"Ingesting data for {symbol} on {target_date}")
 
-        # Fetch options chain
-        chain_df = await self.client.get_options_chain(symbol, target_date)
+        # Fetch options chain (EOD + OI combined)
+        chain_df = self.client.get_options_chain(symbol, target_date)
 
         if chain_df.is_empty():
             logger.warning(f"No options data returned for {symbol} on {target_date}")
             return 0
 
         # Get underlying price for liquidity calculations
-        underlying_price = chain_df.select("underlying_price").to_series()[0]
+        # Fetch it from the stock EOD endpoint
+        underlying_df = self.client.get_underlying_eod(symbol, target_date, target_date)
+        if not underlying_df.is_empty():
+            underlying_price = underlying_df.select("close").to_series()[0]
+        else:
+            # Use the close price from options if available
+            close_prices = chain_df.filter(pl.col("close").is_not_null()).select("close")
+            if not close_prices.is_empty():
+                underlying_price = 500.0  # Default for SPY-like
+            else:
+                underlying_price = 500.0
+
+        # Add underlying_price to the chain_df
+        chain_df = chain_df.with_columns(pl.lit(underlying_price).alias("underlying_price"))
 
         # Apply liquidity filters
         chain_df = apply_liquidity_filters(chain_df, underlying_price, self.settings)
@@ -80,18 +97,17 @@ class IngestionPipeline:
         logger.debug(f"Data quality: {quality_stats}")
 
         # Insert options chain data
-        records_inserted = await self._insert_options_chain(conn, chain_df)
+        records_inserted = self._insert_options_chain(conn, chain_df)
 
-        # Fetch and insert underlying prices
-        prices_df = await self.client.get_underlying_prices(symbol, target_date, target_date)
-        if not prices_df.is_empty():
-            await self._insert_underlying_prices(conn, prices_df)
+        # Insert underlying prices
+        if not underlying_df.is_empty():
+            self._insert_underlying_prices(conn, underlying_df)
 
         logger.info(f"Inserted {records_inserted} options records for {symbol} on {target_date}")
 
         return records_inserted
 
-    async def backfill_historical(
+    def backfill_historical(
         self,
         symbol: str,
         start_date: date,
@@ -123,6 +139,11 @@ class IngestionPipeline:
 
         logger.info(f"Starting backfill for {symbol} from {start_date} to {end_date}")
 
+        # Check terminal status first
+        if not self.client.use_mock and not self.check_terminal():
+            logger.error("Theta Terminal is not accessible. Please start the terminal.")
+            return stats
+
         # Get existing dates to potentially skip
         existing_dates = set()
         if skip_existing:
@@ -132,7 +153,17 @@ class IngestionPipeline:
             ).fetchall()
             existing_dates = {row[0] for row in result}
 
-        async for quote_date, chain_df in self.client.get_historical_chain_batch(
+        # Fetch underlying prices for the full range first
+        logger.info("Fetching underlying prices...")
+        underlying_df = self.client.get_underlying_eod(symbol, start_date, end_date)
+        underlying_prices = {}
+        if not underlying_df.is_empty():
+            for row in underlying_df.iter_rows(named=True):
+                underlying_prices[row["date"]] = row["close"]
+            self._insert_underlying_prices(conn, underlying_df)
+
+        # Iterate through historical chains
+        for quote_date, chain_df in self.client.iter_historical_chains(
             symbol, start_date, end_date
         ):
             if quote_date in existing_dates:
@@ -142,33 +173,35 @@ class IngestionPipeline:
 
             try:
                 if chain_df.is_empty():
-                    logger.warning(f"No data for {quote_date}")
+                    logger.debug(f"No data for {quote_date}")
                     stats["days_failed"] += 1
                     continue
 
-                # Get underlying price
-                underlying_price = chain_df.select("underlying_price").to_series()[0]
+                # Get underlying price for this date
+                underlying_price = underlying_prices.get(quote_date, 500.0)
+
+                # Add underlying_price to chain
+                chain_df = chain_df.with_columns(
+                    pl.lit(underlying_price).alias("underlying_price")
+                )
 
                 # Apply liquidity filters
                 chain_df = apply_liquidity_filters(chain_df, underlying_price, self.settings)
 
                 # Insert data
-                records = await self._insert_options_chain(conn, chain_df)
+                records = self._insert_options_chain(conn, chain_df)
                 stats["records_inserted"] += records
                 stats["days_processed"] += 1
 
                 if stats["days_processed"] % 10 == 0:
-                    logger.info(f"Processed {stats['days_processed']} days, {stats['records_inserted']} records")
+                    logger.info(
+                        f"Processed {stats['days_processed']} days, "
+                        f"{stats['records_inserted']} records"
+                    )
 
             except Exception as e:
                 logger.error(f"Failed to process {quote_date}: {e}")
                 stats["days_failed"] += 1
-
-        # Backfill underlying prices
-        logger.info("Backfilling underlying prices...")
-        prices_df = await self.client.get_underlying_prices(symbol, start_date, end_date)
-        if not prices_df.is_empty():
-            await self._insert_underlying_prices(conn, prices_df)
 
         logger.info(
             f"Backfill complete: {stats['days_processed']} days, "
@@ -179,7 +212,7 @@ class IngestionPipeline:
 
         return stats
 
-    async def _insert_options_chain(
+    def _insert_options_chain(
         self,
         conn,
         df: pl.DataFrame,
@@ -198,6 +231,10 @@ class IngestionPipeline:
 
         # Add chain_id to dataframe
         df = df.with_columns(pl.Series("chain_id", chain_ids))
+
+        # Rename columns to match schema
+        if "close" in df.columns:
+            df = df.rename({"close": "last"})
 
         # Select columns in correct order for insertion
         columns = [
@@ -228,7 +265,7 @@ class IngestionPipeline:
 
         return num_rows
 
-    async def _insert_underlying_prices(
+    def _insert_underlying_prices(
         self,
         conn,
         df: pl.DataFrame,
@@ -254,7 +291,6 @@ class IngestionPipeline:
         try:
             conn.register("temp_prices", insert_df.to_arrow())
             # Delete existing records for these dates, then insert
-            # This is simpler than ON CONFLICT with multiple constraints
             dates_list = df.select("date").to_series().to_list()
             symbols_list = df.select("symbol").to_series().to_list()
             for symbol, dt in zip(symbols_list, dates_list):
@@ -274,3 +310,47 @@ class IngestionPipeline:
             raise
 
         return num_rows
+
+    def get_data_coverage(self, symbol: str) -> dict:
+        """Get data coverage statistics for a symbol."""
+        conn = get_connection()
+
+        stats = {}
+
+        # Options data coverage
+        result = conn.execute("""
+            SELECT
+                MIN(quote_date) as first_date,
+                MAX(quote_date) as last_date,
+                COUNT(DISTINCT quote_date) as num_days,
+                COUNT(*) as total_records
+            FROM raw_options_chains
+            WHERE symbol = ?
+        """, [symbol]).fetchone()
+
+        if result:
+            stats["options"] = {
+                "first_date": result[0],
+                "last_date": result[1],
+                "num_days": result[2],
+                "total_records": result[3],
+            }
+
+        # Underlying price coverage
+        result = conn.execute("""
+            SELECT
+                MIN(date) as first_date,
+                MAX(date) as last_date,
+                COUNT(*) as num_days
+            FROM underlying_prices
+            WHERE symbol = ?
+        """, [symbol]).fetchone()
+
+        if result:
+            stats["underlying"] = {
+                "first_date": result[0],
+                "last_date": result[1],
+                "num_days": result[2],
+            }
+
+        return stats

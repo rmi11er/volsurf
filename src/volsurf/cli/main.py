@@ -4,7 +4,7 @@ import typer
 from rich.console import Console
 
 from volsurf import __version__
-from volsurf.cli.commands import ingest, fit, analyze
+from volsurf.cli.commands import ingest, fit, analyze, terminal
 
 app = typer.Typer(
     name="volsurf",
@@ -17,6 +17,7 @@ console = Console()
 app.add_typer(ingest.app, name="ingest", help="Data ingestion commands")
 app.add_typer(fit.app, name="fit", help="Surface fitting commands")
 app.add_typer(analyze.app, name="analyze", help="Analytics commands")
+app.add_typer(terminal.app, name="terminal", help="Theta Terminal management")
 
 
 @app.command()

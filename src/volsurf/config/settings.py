@@ -16,11 +16,17 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    # Theta Data API
-    theta_api_key: Optional[str] = Field(default=None, description="Theta Data API key")
-    theta_api_url: str = Field(
-        default="https://api.thetadata.us/v2", description="Theta Data API base URL"
+    # Theta Data Terminal (local)
+    theta_terminal_host: str = Field(
+        default="localhost", description="Theta Terminal host"
     )
+    theta_terminal_port: int = Field(
+        default=25503, description="Theta Terminal port"
+    )
+    theta_terminal_jar: Path = Field(
+        default=Path("vendor/ThetaTerminal.jar"), description="Path to Theta Terminal JAR"
+    )
+    theta_username: Optional[str] = Field(default=None, description="Theta Data username (email)")
 
     # Database
     duckdb_path: Path = Field(
@@ -64,9 +70,14 @@ class Settings(BaseSettings):
     streamlit_port: int = Field(default=8501, description="Streamlit dashboard port")
 
     @property
+    def theta_terminal_url(self) -> str:
+        """Return the full Theta Terminal base URL."""
+        return f"http://{self.theta_terminal_host}:{self.theta_terminal_port}/v3"
+
+    @property
     def use_mock_data(self) -> bool:
-        """Return True if no API key is configured (use mock data)."""
-        return self.theta_api_key is None or self.theta_api_key == "your_api_key_here"
+        """Return True if no username is configured (use mock data)."""
+        return self.theta_username is None
 
 
 # Global settings instance

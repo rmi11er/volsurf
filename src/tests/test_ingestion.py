@@ -15,8 +15,9 @@ from volsurf.ingestion.pipeline import IngestionPipeline
 @pytest.fixture
 def mock_settings() -> Settings:
     """Create settings that use mock data."""
+    # Explicitly set theta_username=None to override .env and force mock mode
     return Settings(
-        theta_api_key=None,  # Force mock data
+        theta_username=None,
         min_open_interest=10,
         max_bid_ask_spread_pct=0.30,
     )
@@ -33,55 +34,49 @@ def memory_db() -> duckdb.DuckDBPyConnection:
 class TestThetaDataClient:
     """Tests for Theta Data API client."""
 
-    @pytest.mark.asyncio
-    async def test_uses_mock_when_no_api_key(self, mock_settings):
+    def test_uses_mock_when_no_api_key(self, mock_settings):
         """Client should use mock data when no API key configured."""
         client = ThetaDataClient(mock_settings)
         assert client.use_mock is True
-        await client.close()
+        client.close()
 
-    @pytest.mark.asyncio
-    async def test_get_options_chain_returns_dataframe(self, mock_settings):
+    def test_get_options_chain_returns_dataframe(self, mock_settings):
         """get_options_chain should return a Polars DataFrame."""
         client = ThetaDataClient(mock_settings)
         try:
-            df = await client.get_options_chain("SPY", date(2024, 12, 13))
+            df = client.get_options_chain("SPY", date(2024, 12, 13))
 
             assert isinstance(df, pl.DataFrame)
             assert len(df) > 0
             assert "symbol" in df.columns
             assert "strike" in df.columns
             assert "option_type" in df.columns
-            assert "implied_volatility" in df.columns
         finally:
-            await client.close()
+            client.close()
 
-    @pytest.mark.asyncio
-    async def test_options_chain_has_correct_columns(self, mock_settings):
-        """Options chain should have all expected columns."""
+    def test_options_chain_has_core_columns(self, mock_settings):
+        """Options chain should have core required columns."""
         client = ThetaDataClient(mock_settings)
         try:
-            df = await client.get_options_chain("SPY", date(2024, 12, 13))
+            df = client.get_options_chain("SPY", date(2024, 12, 13))
 
-            expected_columns = {
+            # Core columns that should always be present
+            core_columns = {
                 "symbol", "quote_date", "expiration_date", "strike", "option_type",
-                "bid", "ask", "mid", "last", "volume", "open_interest",
-                "delta", "gamma", "theta", "vega", "rho",
-                "implied_volatility", "underlying_price",
+                "bid", "ask", "mid", "volume", "open_interest",
             }
 
-            assert expected_columns.issubset(set(df.columns))
+            assert core_columns.issubset(set(df.columns))
         finally:
-            await client.close()
+            client.close()
 
-    @pytest.mark.asyncio
-    async def test_get_underlying_prices(self, mock_settings):
-        """get_underlying_prices should return OHLCV data."""
+    def test_get_underlying_prices(self, mock_settings):
+        """get_underlying_eod should return OHLCV data."""
         client = ThetaDataClient(mock_settings)
         try:
             start = date(2024, 12, 9)
             end = date(2024, 12, 13)
-            df = await client.get_underlying_prices("SPY", start, end)
+            df = client.get_underlying_eod("SPY", start, end)
 
             assert isinstance(df, pl.DataFrame)
             assert len(df) > 0
@@ -91,78 +86,63 @@ class TestThetaDataClient:
             assert "close" in df.columns
             assert "volume" in df.columns
         finally:
-            await client.close()
+            client.close()
 
-    @pytest.mark.asyncio
-    async def test_underlying_prices_skips_weekends(self, mock_settings):
+    def test_underlying_prices_skips_weekends(self, mock_settings):
         """Underlying prices should not include weekend dates."""
         client = ThetaDataClient(mock_settings)
         try:
             # Dec 14-15, 2024 are Saturday-Sunday
             start = date(2024, 12, 13)  # Friday
             end = date(2024, 12, 16)  # Monday
-            df = await client.get_underlying_prices("SPY", start, end)
+            df = client.get_underlying_eod("SPY", start, end)
 
             dates = df["date"].to_list()
             for d in dates:
                 assert d.weekday() < 5, f"Weekend date found: {d}"
         finally:
-            await client.close()
+            client.close()
 
-    @pytest.mark.asyncio
-    async def test_expiration_filter(self, mock_settings):
-        """Options chain should respect expiration filters."""
+    def test_get_expirations_returns_dates(self, mock_settings):
+        """get_expirations should return a list of dates."""
         client = ThetaDataClient(mock_settings)
         try:
-            quote_date = date(2024, 12, 13)
-            exp_min = quote_date + timedelta(days=30)
-            exp_max = quote_date + timedelta(days=90)
+            expirations = client.get_expirations("SPY")
 
-            df = await client.get_options_chain(
-                "SPY", quote_date, exp_min=exp_min, exp_max=exp_max
-            )
-
-            if len(df) > 0:
-                expirations = df["expiration_date"].unique().to_list()
-                for exp in expirations:
-                    assert exp >= exp_min, f"Expiration {exp} before min {exp_min}"
-                    assert exp <= exp_max, f"Expiration {exp} after max {exp_max}"
+            assert isinstance(expirations, list)
+            assert len(expirations) > 0
+            assert all(isinstance(d, date) for d in expirations)
         finally:
-            await client.close()
+            client.close()
 
-    @pytest.mark.asyncio
-    async def test_historical_batch_yields_dates(self, mock_settings):
-        """Historical batch should yield data for each trading day."""
+    def test_get_strikes_returns_floats(self, mock_settings):
+        """get_strikes should return a list of strike prices."""
         client = ThetaDataClient(mock_settings)
         try:
-            start = date(2024, 12, 9)
-            end = date(2024, 12, 13)
+            # First get an expiration
+            expirations = client.get_expirations("SPY")
+            if expirations:
+                strikes = client.get_strikes("SPY", expirations[0])
 
-            dates_seen = []
-            async for quote_date, df in client.get_historical_chain_batch("SPY", start, end):
-                dates_seen.append(quote_date)
-                assert isinstance(df, pl.DataFrame)
-
-            # Should have 5 trading days (Mon-Fri)
-            assert len(dates_seen) == 5
+                assert isinstance(strikes, list)
+                assert len(strikes) > 0
+                assert all(isinstance(s, (int, float)) for s in strikes)
         finally:
-            await client.close()
+            client.close()
 
 
 class TestIngestionPipeline:
     """Tests for the ingestion pipeline."""
 
-    @pytest.mark.asyncio
-    async def test_daily_ingestion_inserts_data(self, mock_settings, memory_db, monkeypatch):
+    def test_daily_ingestion_inserts_data(self, mock_settings, memory_db, monkeypatch):
         """Daily ingestion should insert data into database."""
         # Monkeypatch to use our in-memory db
-        import volsurf.ingestion.pipeline as pipeline_module
         import volsurf.database.connection as conn_module
 
         monkeypatch.setattr(conn_module, "_connection", memory_db)
 
         pipeline = IngestionPipeline(mock_settings)
-        records = await pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
+        records = pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
 
         assert records > 0
 
@@ -172,10 +152,8 @@ class TestIngestionPipeline:
         ).fetchone()
         assert result[0] > 0
 
-    @pytest.mark.asyncio
-    async def test_daily_ingestion_skips_existing(self, mock_settings, memory_db, monkeypatch):
+    def test_daily_ingestion_skips_existing(self, mock_settings, memory_db, monkeypatch):
         """Should skip ingestion if data already exists."""
-        import volsurf.ingestion.pipeline as pipeline_module
         import volsurf.database.connection as conn_module
 
         monkeypatch.setattr(conn_module, "_connection", memory_db)
@@ -183,22 +161,21 @@ class TestIngestionPipeline:
         pipeline = IngestionPipeline(mock_settings)
 
         # First ingestion
-        records1 = await pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
+        records1 = pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
         assert records1 > 0
 
         # Second ingestion should skip
-        records2 = await pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
+        records2 = pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
         assert records2 == 0
 
-    @pytest.mark.asyncio
-    async def test_daily_ingestion_applies_filters(self, mock_settings, memory_db, monkeypatch):
+    def test_daily_ingestion_applies_filters(self, mock_settings, memory_db, monkeypatch):
         """Ingested data should have is_liquid column."""
         import volsurf.database.connection as conn_module
 
         monkeypatch.setattr(conn_module, "_connection", memory_db)
 
         pipeline = IngestionPipeline(mock_settings)
-        await pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
+        pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
 
         # Check that is_liquid column exists and has values
         result = memory_db.execute("""
@@ -210,15 +187,14 @@ class TestIngestionPipeline:
         assert result[0] > 0  # Has data
         assert result[1] > 0  # Some are liquid
 
-    @pytest.mark.asyncio
-    async def test_backfill_processes_multiple_days(self, mock_settings, memory_db, monkeypatch):
+    def test_backfill_processes_multiple_days(self, mock_settings, memory_db, monkeypatch):
         """Backfill should process multiple trading days."""
         import volsurf.database.connection as conn_module
 
         monkeypatch.setattr(conn_module, "_connection", memory_db)
 
         pipeline = IngestionPipeline(mock_settings)
-        stats = await pipeline.backfill_historical(
+        stats = pipeline.backfill_historical(
             "SPY",
             date(2024, 12, 9),
             date(2024, 12, 13),
@@ -233,15 +209,14 @@ class TestIngestionPipeline:
         ).fetchone()
         assert result[0] == 5
 
-    @pytest.mark.asyncio
-    async def test_inserts_underlying_prices(self, mock_settings, memory_db, monkeypatch):
+    def test_inserts_underlying_prices(self, mock_settings, memory_db, monkeypatch):
         """Should insert underlying price data."""
         import volsurf.database.connection as conn_module
 
         monkeypatch.setattr(conn_module, "_connection", memory_db)
 
         pipeline = IngestionPipeline(mock_settings)
-        await pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
+        pipeline.run_daily_ingestion("SPY", date(2024, 12, 13))
 
         result = memory_db.execute(
             "SELECT COUNT(*) FROM underlying_prices WHERE symbol = 'SPY'"

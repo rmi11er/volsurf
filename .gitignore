@@ -81,3 +81,10 @@ Thumbs.db
 *.tmp
 *.temp
 .cache/
+
+# Theta Terminal
+vendor/creds.txt
+vendor/*.jar
+vendor/ThetaTerminal.jar
+vendor/lib/
+vendor/data/

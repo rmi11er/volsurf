@@ -42,8 +42,9 @@ def sample_options_df() -> pl.DataFrame:
 @pytest.fixture
 def test_settings() -> Settings:
     """Create test settings with specific filter thresholds."""
+    # Explicitly set theta_username=None to override .env and force mock mode
     return Settings(
-        theta_api_key=None,
+        theta_username=None,
         min_open_interest=50,
         max_bid_ask_spread_pct=0.20,
         min_dte=7,
