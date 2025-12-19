@@ -7,6 +7,13 @@ from volsurf.fitting.arbitrage import (
     validate_surface,
     validate_term_structure,
 )
+from volsurf.fitting.comparison import (
+    FullComparisonResult,
+    ModelComparator,
+    ModelComparisonResult,
+    ModelType,
+    print_comparison_summary,
+)
 from volsurf.fitting.implied_vol import (
     black_scholes_price,
     black_scholes_vega,
@@ -21,6 +28,23 @@ from volsurf.fitting.pipeline import (
     SurfaceFittingPipeline,
     batch_fit_surfaces,
     fit_surfaces_for_date,
+)
+from volsurf.fitting.polynomial import (
+    PolynomialFitResult,
+    fit_polynomial_slice,
+    polynomial_atm_vol,
+    polynomial_curvature,
+    polynomial_implied_vol,
+    polynomial_skew,
+)
+from volsurf.fitting.sabr import (
+    SABRFitResult,
+    check_sabr_constraints,
+    fit_sabr_slice,
+    sabr_atm_vol,
+    sabr_implied_vol,
+    sabr_implied_vol_vectorized,
+    sabr_skew,
 )
 from volsurf.fitting.svi import (
     SVIFitResult,
@@ -39,6 +63,12 @@ __all__ = [
     "check_calendar_arbitrage",
     "validate_surface",
     "validate_term_structure",
+    # Comparison
+    "FullComparisonResult",
+    "ModelComparator",
+    "ModelComparisonResult",
+    "ModelType",
+    "print_comparison_summary",
     # Implied vol
     "black_scholes_price",
     "black_scholes_vega",
@@ -52,6 +82,21 @@ __all__ = [
     "SurfaceFittingPipeline",
     "batch_fit_surfaces",
     "fit_surfaces_for_date",
+    # Polynomial
+    "PolynomialFitResult",
+    "fit_polynomial_slice",
+    "polynomial_atm_vol",
+    "polynomial_curvature",
+    "polynomial_implied_vol",
+    "polynomial_skew",
+    # SABR
+    "SABRFitResult",
+    "check_sabr_constraints",
+    "fit_sabr_slice",
+    "sabr_atm_vol",
+    "sabr_implied_vol",
+    "sabr_implied_vol_vectorized",
+    "sabr_skew",
     # SVI
     "SVIFitResult",
     "check_svi_constraints",

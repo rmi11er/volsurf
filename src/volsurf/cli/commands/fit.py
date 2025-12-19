@@ -334,3 +334,164 @@ def show(
     if not row["passes_no_arbitrage"]:
         console.print(f"  Butterfly violations: {row['butterfly_arbitrage_violations']}")
         console.print(f"  Calendar violations: {row['calendar_arbitrage_violations']}")
+
+
+@app.command()
+def compare(
+    symbol: str = typer.Argument("SPY", help="Symbol to compare"),
+    target_date: Optional[str] = typer.Option(
+        None, "--date", "-d", help="Date to compare (YYYY-MM-DD), defaults to latest"
+    ),
+    expiration: Optional[str] = typer.Option(
+        None, "--expiration", "-e", help="Specific expiration to compare (YYYY-MM-DD)"
+    ),
+) -> None:
+    """Compare SVI, SABR, and polynomial models for a date."""
+    from volsurf.database.connection import get_connection
+    from volsurf.fitting.comparison import ModelComparator, print_comparison_summary
+
+    conn = get_connection()
+
+    # Get the quote date
+    if target_date:
+        quote_date = parse_date(target_date)
+    else:
+        result = conn.execute(
+            "SELECT MAX(quote_date) FROM raw_options_chains WHERE symbol = ?",
+            [symbol],
+        ).fetchone()
+        if result[0] is None:
+            console.print(f"[red]No data found for {symbol}[/red]")
+            raise typer.Exit(1)
+        quote_date = result[0]
+
+    console.print(
+        f"Comparing models for [cyan]{symbol}[/cyan] on [cyan]{quote_date}[/cyan]\n"
+    )
+
+    comparator = ModelComparator()
+
+    if expiration:
+        # Compare single expiration
+        exp_date = parse_date(expiration)
+        result = comparator.compare_slice(symbol, quote_date, exp_date)
+
+        if result is None:
+            console.print(f"[red]No data found for expiration {exp_date}[/red]")
+            raise typer.Exit(1)
+
+        tte_days = int(result.tte_years * 365)
+        console.print(f"[bold]Expiration: {exp_date} (TTE: {tte_days} days)[/bold]")
+        console.print(f"Points used: {result.num_points}\n")
+
+        table = Table(title="Model Comparison")
+        table.add_column("Model", style="cyan")
+        table.add_column("RMSE", justify="right")
+        table.add_column("Status", justify="center")
+
+        for model, rmse in result.rmse_by_model.items():
+            status = "[green]OK[/green]" if rmse is not None else "[red]Failed[/red]"
+            rmse_str = f"{rmse*100:.4f}%" if rmse else "N/A"
+            table.add_row(model.value, rmse_str, status)
+
+        console.print(table)
+
+        if result.best_model:
+            console.print(f"\n[green]Best model: {result.best_model.value}[/green]")
+
+    else:
+        # Compare all expirations for the date
+        full_result = comparator.compare_date(symbol, quote_date)
+
+        if not full_result.slice_results:
+            console.print(f"[red]No data found for {symbol} on {quote_date}[/red]")
+            raise typer.Exit(1)
+
+        print_comparison_summary(full_result)
+
+        # Show best model summary
+        console.print(f"\n[bold]Best Model Selection:[/bold]")
+        console.print(f"  SVI best: {full_result.svi_best_count} expirations")
+        console.print(f"  SABR best: {full_result.sabr_best_count} expirations")
+        console.print(f"  Polynomial best: {full_result.poly_best_count} expirations")
+
+
+@app.command()
+def sabr(
+    symbol: str = typer.Argument("SPY", help="Symbol to fit"),
+    expiration: str = typer.Option(
+        ..., "--expiration", "-e", help="Expiration date (YYYY-MM-DD)"
+    ),
+    target_date: Optional[str] = typer.Option(
+        None, "--date", "-d", help="Quote date (YYYY-MM-DD), defaults to latest"
+    ),
+    beta: float = typer.Option(0.7, "--beta", "-b", help="SABR beta parameter (0-1)"),
+) -> None:
+    """Fit SABR model to a specific expiration."""
+    import numpy as np
+    from volsurf.database.connection import get_connection
+    from volsurf.fitting.sabr import fit_sabr_slice, sabr_atm_vol, sabr_skew
+
+    conn = get_connection()
+    exp_date = parse_date(expiration)
+
+    if target_date:
+        quote_date = parse_date(target_date)
+    else:
+        result = conn.execute(
+            "SELECT MAX(quote_date) FROM raw_options_chains WHERE symbol = ?",
+            [symbol],
+        ).fetchone()
+        if result[0] is None:
+            console.print(f"[red]No data found for {symbol}[/red]")
+            raise typer.Exit(1)
+        quote_date = result[0]
+
+    console.print(
+        f"Fitting SABR for [cyan]{symbol}[/cyan] expiring [cyan]{exp_date}[/cyan]\n"
+    )
+
+    # Get options data
+    query = """
+        SELECT strike, implied_volatility, underlying_price
+        FROM raw_options_chains
+        WHERE symbol = ? AND quote_date = ? AND expiration_date = ?
+          AND is_liquid = TRUE AND implied_volatility IS NOT NULL
+        ORDER BY strike
+    """
+    df = conn.execute(query, [symbol, quote_date, exp_date]).fetchdf()
+
+    if df.empty or len(df) < 5:
+        console.print(f"[red]Insufficient data for {exp_date}[/red]")
+        raise typer.Exit(1)
+
+    # Calculate TTE
+    tte_years = (exp_date - quote_date).days / 365.0
+    forward = float(df["underlying_price"].iloc[0])  # Simplified
+
+    strikes = df["strike"].values
+    ivs = df["implied_volatility"].values
+
+    result = fit_sabr_slice(strikes, ivs, forward, tte_years, beta=beta)
+
+    if result is None:
+        console.print("[red]SABR fitting failed[/red]")
+        raise typer.Exit(1)
+
+    # Display results
+    console.print(f"[bold]SABR Parameters:[/bold]")
+    console.print(f"  α (alpha): {result.alpha:.6f}")
+    console.print(f"  β (beta):  {result.beta:.4f}")
+    console.print(f"  ρ (rho):   {result.rho:.4f}")
+    console.print(f"  ν (nu):    {result.nu:.6f}")
+
+    atm_vol = sabr_atm_vol(forward, tte_years, result.alpha, result.beta, result.rho, result.nu)
+    skew = sabr_skew(forward, tte_years, result.alpha, result.beta, result.rho, result.nu)
+
+    console.print(f"\n[bold]Derived Quantities:[/bold]")
+    console.print(f"  ATM Vol: {atm_vol*100:.2f}%")
+    console.print(f"  Skew: {skew*100:.2f}%")
+
+    console.print(f"\n[bold]Fit Quality:[/bold]")
+    console.print(f"  RMSE: {result.rmse*100:.4f}%")
+    console.print(f"  Points: {result.num_points}")

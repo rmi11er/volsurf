@@ -1,5 +1,6 @@
 """Pydantic models for options data and surface parameters."""
 
+import math
 from datetime import date, datetime
 from decimal import Decimal
 from enum import Enum
@@ -137,6 +138,81 @@ class FittedSurface(BaseModel):
     passes_no_arbitrage: bool
     butterfly_violations: int = 0
     calendar_violations: int = 0
+
+
+class SABRParams(BaseModel):
+    """SABR model parameters."""
+
+    # SABR stochastic volatility model
+    alpha: float = Field(gt=0, description="Initial volatility level")
+    beta: float = Field(ge=0, le=1, description="CEV exponent (0=normal, 1=lognormal)")
+    rho: float = Field(ge=-1, le=1, description="Correlation between forward and vol")
+    nu: float = Field(ge=0, description="Vol-of-vol")
+
+    def implied_vol(
+        self, forward: float, strike: float, tte_years: float
+    ) -> float:
+        """Calculate implied volatility using Hagan's approximation."""
+        if tte_years <= 0:
+            return 0.0
+
+        # ATM case
+        if abs(forward - strike) < 1e-10:
+            fk = forward
+            fk_beta = fk ** (1 - self.beta)
+            term1 = self.alpha / fk_beta
+            term2 = 1 + (
+                ((1 - self.beta) ** 2 / 24) * (self.alpha ** 2 / fk ** (2 - 2 * self.beta))
+                + (self.rho * self.beta * self.nu * self.alpha) / (4 * fk_beta)
+                + ((2 - 3 * self.rho ** 2) * self.nu ** 2) / 24
+            ) * tte_years
+            return term1 * term2
+
+        # General case
+        fk = forward * strike
+        fk_beta = fk ** ((1 - self.beta) / 2)
+        log_fk = math.log(forward / strike)
+
+        z = (self.nu / self.alpha) * fk_beta * log_fk
+
+        if abs(z) < 1e-10:
+            x_z = 1.0
+        else:
+            sqrt_term = math.sqrt(1 - 2 * self.rho * z + z ** 2)
+            x_z = z / math.log((sqrt_term + z - self.rho) / (1 - self.rho))
+
+        one_minus_beta = 1 - self.beta
+        fk_pow = fk ** (one_minus_beta / 2)
+
+        denom = fk_pow * (
+            1
+            + (one_minus_beta ** 2 / 24) * log_fk ** 2
+            + (one_minus_beta ** 4 / 1920) * log_fk ** 4
+        )
+
+        numer_corr = 1 + (
+            (one_minus_beta ** 2 / 24) * (self.alpha ** 2 / fk ** one_minus_beta)
+            + (self.rho * self.beta * self.nu * self.alpha) / (4 * fk_pow)
+            + ((2 - 3 * self.rho ** 2) * self.nu ** 2) / 24
+        ) * tte_years
+
+        return max((self.alpha / denom) * x_z * numer_corr, 1e-10)
+
+
+class PolynomialParams(BaseModel):
+    """Polynomial smile model parameters."""
+
+    # Polynomial fit: IV(k) = a0 + a1*k + a2*k^2 + a3*k^3 + ...
+    coefficients: list[float] = Field(description="Polynomial coefficients [a0, a1, a2, ...]")
+    degree: int = Field(ge=1, le=6, description="Polynomial degree")
+
+    def implied_vol(self, log_moneyness: float) -> float:
+        """Calculate implied volatility from polynomial."""
+        k = log_moneyness
+        result = 0.0
+        for i, coef in enumerate(self.coefficients):
+            result += coef * (k ** i)
+        return max(result, 1e-10)
 
 
 class TermStructureParams(BaseModel):
