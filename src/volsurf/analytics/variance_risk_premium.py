@@ -1,5 +1,6 @@
 """Variance Risk Premium (VRP) calculation."""
 
+import math
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
@@ -208,9 +209,24 @@ class VRPCalculator:
 
         return result
 
+    def _sanitize_nan(self, value: Optional[float]) -> Optional[float]:
+        """Convert NaN values to None for database storage."""
+        if value is None:
+            return None
+        if isinstance(value, float) and math.isnan(value):
+            return None
+        return value
+
     def store_result(self, result: VRPResult) -> None:
         """Store VRP result in database."""
         conn = get_connection()
+
+        # Sanitize NaN values to None for database storage
+        vrp_30d = self._sanitize_nan(result.vrp_30d)
+        vrp_60d = self._sanitize_nan(result.vrp_60d)
+        vrp_90d = self._sanitize_nan(result.vrp_90d)
+        implied_vol = self._sanitize_nan(result.implied_vol_30d)
+        realized_vol = self._sanitize_nan(result.realized_vol_30d)
 
         conn.execute(
             """
@@ -239,11 +255,11 @@ class VRPCalculator:
             [
                 result.symbol,
                 result.date,
-                result.vrp_30d,
-                result.vrp_60d,
-                result.vrp_90d,
-                result.implied_vol_30d,
-                result.realized_vol_30d,
+                vrp_30d,
+                vrp_60d,
+                vrp_90d,
+                implied_vol,
+                realized_vol,
                 result.vrp_zscore,
             ],
         )
@@ -288,8 +304,12 @@ class VRPCalculator:
 
             result = self.calculate_for_date(symbol, target_date)
 
-            # Only store if we have at least some data
-            if result.vrp_30d is not None and store:
+            # Only store if we have valid (non-NaN) VRP data
+            has_valid_vrp = (
+                result.vrp_30d is not None
+                and not (isinstance(result.vrp_30d, float) and math.isnan(result.vrp_30d))
+            )
+            if has_valid_vrp and store:
                 self.store_result(result)
                 count += 1
 

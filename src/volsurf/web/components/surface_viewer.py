@@ -98,7 +98,7 @@ def render_3d_surface(symbol: str, selected_date: date, surfaces_df: pd.DataFram
         height=600,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Show ATM term structure on the side
     st.markdown("**ATM Volatility by Expiration:**")
@@ -173,7 +173,7 @@ def render_vol_smile(symbol: str, surfaces_df: pd.DataFrame) -> None:
         legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Show skew metrics
     st.markdown("**Skew Metrics:**")

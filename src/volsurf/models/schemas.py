@@ -232,3 +232,188 @@ class TermStructureParams(BaseModel):
     skew_rmse: Optional[float] = None
 
     num_expirations: int
+
+
+# --- Intraday Models ---
+
+
+class IntradayOptionQuote(BaseModel):
+    """Single option quote at a specific intraday timestamp."""
+
+    symbol: str
+    timestamp: datetime
+    expiration_date: date
+    strike: Decimal
+    option_type: OptionType
+
+    # Market data
+    bid: Optional[Decimal] = None
+    ask: Optional[Decimal] = None
+    bid_size: Optional[int] = None
+    ask_size: Optional[int] = None
+
+    @property
+    def mid(self) -> Optional[Decimal]:
+        """Calculate mid price from bid/ask."""
+        if self.bid is not None and self.ask is not None:
+            return (self.bid + self.ask) / 2
+        return None
+
+    @property
+    def spread(self) -> Optional[Decimal]:
+        """Calculate bid-ask spread."""
+        if self.bid is not None and self.ask is not None:
+            return self.ask - self.bid
+        return None
+
+
+class IntradayOptionsChain(BaseModel):
+    """Complete options chain at a specific intraday timestamp."""
+
+    symbol: str
+    timestamp: datetime
+    underlying_price: Decimal
+    quotes: list[IntradayOptionQuote]
+
+    def to_dataframe(self) -> "pl.DataFrame":
+        """Convert to Polars DataFrame for analysis."""
+        import polars as pl
+
+        records = []
+        for q in self.quotes:
+            records.append({
+                "symbol": q.symbol,
+                "timestamp": q.timestamp,
+                "expiration_date": q.expiration_date,
+                "strike": float(q.strike),
+                "option_type": q.option_type.value,
+                "bid": float(q.bid) if q.bid else None,
+                "ask": float(q.ask) if q.ask else None,
+                "mid": float(q.mid) if q.mid else None,
+                "bid_size": q.bid_size,
+                "ask_size": q.ask_size,
+                "underlying_price": float(self.underlying_price),
+            })
+        return pl.DataFrame(records)
+
+
+class IntradayFittedSurface(BaseModel):
+    """Fitted volatility surface at a specific intraday timestamp."""
+
+    symbol: str
+    timestamp: datetime  # Intraday timestamp instead of date
+    expiration_date: date
+    tte_years: float
+    forward_price: Decimal
+
+    # SVI parameters
+    svi_params: SVIParams
+
+    # Derived quantities
+    atm_vol: float
+    skew_25delta: Optional[float] = None
+
+    # Fit quality
+    rmse: float
+    mae: float
+    max_error: float
+    num_points: int
+
+    # Arbitrage checks
+    passes_no_arbitrage: bool
+    butterfly_violations: int = 0
+    calendar_violations: int = 0
+
+
+class IntradaySurfaceResult(BaseModel):
+    """Result of fitting surfaces at an intraday timestamp."""
+
+    symbol: str
+    timestamp: datetime
+    underlying_price: Decimal
+    surfaces: list[IntradayFittedSurface]
+
+    # Aggregate statistics
+    total_expirations: int = 0
+    successful_fits: int = 0
+    failed_fits: int = 0
+    avg_rmse: Optional[float] = None
+
+    def to_parquet(self, path: str) -> None:
+        """Export surfaces to Parquet file."""
+        import polars as pl
+
+        records = []
+        for s in self.surfaces:
+            records.append({
+                "symbol": s.symbol,
+                "timestamp": s.timestamp,
+                "expiration_date": s.expiration_date,
+                "tte_years": s.tte_years,
+                "forward_price": float(s.forward_price),
+                "underlying_price": float(self.underlying_price),
+                "svi_a": s.svi_params.a,
+                "svi_b": s.svi_params.b,
+                "svi_rho": s.svi_params.rho,
+                "svi_m": s.svi_params.m,
+                "svi_sigma": s.svi_params.sigma,
+                "atm_vol": s.atm_vol,
+                "skew_25delta": s.skew_25delta,
+                "rmse": s.rmse,
+                "mae": s.mae,
+                "max_error": s.max_error,
+                "num_points": s.num_points,
+                "passes_no_arbitrage": s.passes_no_arbitrage,
+            })
+        if records:
+            pl.DataFrame(records).write_parquet(path)
+
+    @classmethod
+    def from_parquet(cls, path: str) -> "IntradaySurfaceResult":
+        """Load surfaces from Parquet file."""
+        import polars as pl
+
+        df = pl.read_parquet(path)
+        if df.is_empty():
+            raise ValueError(f"Empty Parquet file: {path}")
+
+        first_row = df.row(0, named=True)
+        surfaces = []
+
+        for row in df.iter_rows(named=True):
+            surfaces.append(IntradayFittedSurface(
+                symbol=row["symbol"],
+                timestamp=row["timestamp"],
+                expiration_date=row["expiration_date"],
+                tte_years=row["tte_years"],
+                forward_price=Decimal(str(row["forward_price"])),
+                svi_params=SVIParams(
+                    a=row["svi_a"],
+                    b=row["svi_b"],
+                    rho=row["svi_rho"],
+                    m=row["svi_m"],
+                    sigma=row["svi_sigma"],
+                ),
+                atm_vol=row["atm_vol"],
+                skew_25delta=row["skew_25delta"],
+                rmse=row["rmse"],
+                mae=row["mae"],
+                max_error=row["max_error"],
+                num_points=row["num_points"],
+                passes_no_arbitrage=row["passes_no_arbitrage"],
+            ))
+
+        # Use actual underlying_price if available, else fall back to forward_price
+        if "underlying_price" in df.columns and first_row.get("underlying_price") is not None:
+            underlying = Decimal(str(first_row["underlying_price"]))
+        else:
+            underlying = Decimal(str(first_row["forward_price"]))
+
+        return cls(
+            symbol=first_row["symbol"],
+            timestamp=first_row["timestamp"],
+            underlying_price=underlying,
+            surfaces=surfaces,
+            total_expirations=len(surfaces),
+            successful_fits=len(surfaces),
+        )

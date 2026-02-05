@@ -51,6 +51,7 @@ env/
 # Data files (large, generated)
 data/raw/
 data/processed/
+data/intraday/
 data/*.duckdb
 data/*.duckdb.wal
 

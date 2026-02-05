@@ -1,7 +1,7 @@
 """Theta Data Terminal client for local v3 API."""
 
 from datetime import date, timedelta
-from typing import Iterator, Optional
+from typing import Iterator, Optional, Set
 
 import httpx
 import polars as pl
@@ -145,6 +145,7 @@ class ThetaTerminalClient:
         symbol: str,
         quote_date: date,
         expiration: Optional[date] = None,
+        timeout: Optional[float] = None,
     ) -> pl.DataFrame:
         """
         Fetch end-of-day options data for a specific date.
@@ -153,6 +154,7 @@ class ThetaTerminalClient:
             symbol: Underlying symbol (e.g., 'SPY')
             quote_date: Date to fetch data for
             expiration: Optional specific expiration (default: all expirations)
+            timeout: Optional request timeout in seconds
 
         Returns:
             Polars DataFrame with columns:
@@ -173,7 +175,7 @@ class ThetaTerminalClient:
 
         logger.debug(f"Fetching options EOD: {params}")
 
-        response = client.get(f"{self.base_url}/option/history/eod", params=params)
+        response = client.get(f"{self.base_url}/option/history/eod", params=params, timeout=timeout)
         response.raise_for_status()
 
         data = response.json()
@@ -260,6 +262,7 @@ class ThetaTerminalClient:
         self,
         symbol: str,
         quote_date: date,
+        timeout: Optional[float] = None,
     ) -> pl.DataFrame:
         """
         Fetch complete options chain for a date (EOD + Open Interest combined).
@@ -269,12 +272,13 @@ class ThetaTerminalClient:
         Args:
             symbol: Underlying symbol
             quote_date: Date to fetch data for
+            timeout: Optional request timeout in seconds (default uses client default)
 
         Returns:
             Polars DataFrame with full options chain data
         """
         # Get EOD data
-        eod_df = self.get_options_eod(symbol, quote_date)
+        eod_df = self.get_options_eod(symbol, quote_date, timeout=timeout)
         if eod_df.is_empty():
             return eod_df
 
@@ -425,6 +429,7 @@ class ThetaTerminalClient:
         symbol: str,
         start_date: date,
         end_date: date,
+        skip_dates: Optional[Set[date]] = None,
     ) -> Iterator[tuple[date, pl.DataFrame]]:
         """
         Iterate over historical options chains for a date range.
@@ -435,15 +440,23 @@ class ThetaTerminalClient:
             symbol: Underlying symbol
             start_date: Start of date range
             end_date: End of date range
+            skip_dates: Optional set of dates to skip (avoids API calls for existing data)
 
         Yields:
             Tuple of (quote_date, options_chain_df)
         """
         current_date = start_date
+        skip_dates = skip_dates or set()
 
         while current_date <= end_date:
             # Skip weekends
             if current_date.weekday() < 5:
+                # Skip dates we already have (BEFORE making API call)
+                if current_date in skip_dates:
+                    logger.debug(f"Skipping {current_date} - already exists")
+                    current_date += timedelta(days=1)
+                    continue
+
                 try:
                     chain_df = self.get_options_chain(symbol, current_date)
                     if not chain_df.is_empty():

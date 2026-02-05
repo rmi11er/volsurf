@@ -25,6 +25,10 @@ class RealizedVolResult:
     parkinson_21d: Optional[float] = None
     gk_10d: Optional[float] = None
     gk_21d: Optional[float] = None
+    # Realized skew (third moment)
+    skew_10d: Optional[float] = None
+    skew_21d: Optional[float] = None
+    skew_63d: Optional[float] = None
 
 
 def calculate_close_to_close_vol(
@@ -131,6 +135,33 @@ def calculate_garman_klass_vol(
     return np.sqrt(variance * annualization_factor)
 
 
+def calculate_realized_skew(returns: np.ndarray) -> float:
+    """
+    Calculate realized skewness (third standardized moment) of returns.
+
+    Realized skew measures the asymmetry of returns distribution.
+    Negative skew means larger downside moves than upside (typical for equities).
+
+    Args:
+        returns: Array of log returns
+
+    Returns:
+        Realized skewness (standardized, no units)
+    """
+    if len(returns) < 3:
+        return np.nan
+
+    mean = np.mean(returns)
+    std = np.std(returns, ddof=1)
+
+    if std == 0:
+        return np.nan
+
+    # Third standardized moment
+    skew = np.mean(((returns - mean) / std) ** 3)
+    return float(skew)
+
+
 class RealizedVolCalculator:
     """Calculator for realized volatility metrics."""
 
@@ -235,6 +266,13 @@ class RealizedVolCalculator:
                     self.annualization_factor,
                 )
                 setattr(result, attr, rv)
+
+        # Realized skewness
+        skew_windows = [(10, "skew_10d"), (21, "skew_21d"), (63, "skew_63d")]
+        for window, attr in skew_windows:
+            if len(log_returns) >= window:
+                skew = calculate_realized_skew(log_returns[-window:])
+                setattr(result, attr, skew)
 
         return result
 
@@ -370,3 +408,57 @@ class RealizedVolCalculator:
             ORDER BY date
         """
         return conn.execute(query, [symbol, start_date, end_date]).fetchdf()
+
+    def get_realized_skew_timeseries(
+        self, symbol: str, start_date: date, end_date: date, window: int = 21
+    ) -> pd.DataFrame:
+        """
+        Calculate realized skew time series from underlying prices.
+
+        Args:
+            symbol: Ticker symbol
+            start_date: Start of range
+            end_date: End of range
+            window: Rolling window in days for skew calculation
+
+        Returns:
+            DataFrame with date and realized_skew columns
+        """
+        conn = get_connection()
+
+        # Get all price data with extra buffer for lookback
+        buffer_days = window + 30
+        query = """
+            SELECT date, close
+            FROM underlying_prices
+            WHERE symbol = ?
+              AND date <= ?
+            ORDER BY date
+        """
+        df = conn.execute(query, [symbol, end_date]).fetchdf()
+
+        if df.empty or len(df) < window:
+            return pd.DataFrame(columns=["date", "realized_skew"])
+
+        # Calculate log returns
+        df["log_return"] = np.log(df["close"] / df["close"].shift(1))
+        df = df.dropna()
+
+        # Calculate rolling skew
+        results = []
+        for i in range(window, len(df)):
+            row_date = df.iloc[i]["date"]
+            if hasattr(row_date, "date"):
+                row_date = row_date.date()
+
+            # Skip dates before start_date
+            if row_date < start_date:
+                continue
+            if row_date > end_date:
+                break
+
+            returns = df.iloc[i - window : i]["log_return"].values
+            skew = calculate_realized_skew(returns)
+            results.append({"date": row_date, "realized_skew": skew})
+
+        return pd.DataFrame(results)

@@ -62,6 +62,12 @@ class Settings(BaseSettings):
         default=100, description="Reference DTE for vega weighting (sqrt(TTE/reference))"
     )
 
+    # Watchlist
+    watchlist: list[str] = Field(
+        default=["SPY", "QQQ", "GLD", "SLV", "NVDA", "GOOG", "TSLA", "PLTR", "NFLX", "AMD", "GME"],
+        description="Symbols to track (override via WATCHLIST env var as comma-separated)",
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
     log_file: Path = Field(default=Path("logs/volsurf.log"), description="Log file path")

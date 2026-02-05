@@ -101,7 +101,7 @@ def render_fit_quality(symbol: str, selected_date: date) -> None:
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Detailed table
     st.markdown("**Fit Details:**")
@@ -251,7 +251,7 @@ def render_residuals(symbol: str, selected_date: date) -> None:
         hovermode="closest",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Residual statistics
     col1, col2, col3, col4 = st.columns(4)
@@ -297,7 +297,7 @@ def render_residuals(symbol: str, selected_date: date) -> None:
         hovermode="x unified",
     )
 
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
 
 def render_arbitrage_checks(symbol: str, selected_date: date) -> None:
@@ -469,7 +469,7 @@ def render_data_coverage(symbol: str) -> None:
         hovermode="x unified",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Expirations coverage
     st.markdown("**Expirations per Day:**")
@@ -482,7 +482,7 @@ def render_data_coverage(symbol: str) -> None:
         labels={"num_expirations": "Expirations", "quote_date": "Date"},
     )
 
-    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig2, width="stretch")
 
     # Fitted surfaces coverage
     st.markdown("---")

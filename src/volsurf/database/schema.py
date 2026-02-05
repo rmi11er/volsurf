@@ -210,6 +210,106 @@ VRP_METRICS_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_vrp_symbol_date ON vrp_metrics(symbol, date)",
 ]
 
+SURFACE_METRICS_HISTORY_DDL = """
+CREATE TABLE IF NOT EXISTS surface_metrics_history (
+    smh_id BIGINT PRIMARY KEY,
+    symbol VARCHAR NOT NULL,
+    quote_date DATE NOT NULL,
+
+    -- ATM vol at standard tenors (interpolated from fitted surfaces)
+    atm_vol_30d DECIMAL(8, 6),
+    atm_vol_60d DECIMAL(8, 6),
+    atm_vol_90d DECIMAL(8, 6),
+
+    -- 25-delta skew at standard tenors
+    skew_25d_30d DECIMAL(8, 6),
+    skew_25d_60d DECIMAL(8, 6),
+    skew_25d_90d DECIMAL(8, 6),
+
+    -- Term structure slope (90d ATM - 30d ATM)
+    term_slope DECIMAL(8, 6),
+
+    -- Butterfly (25d put IV + 25d call IV - 2*ATM IV, at 30d tenor)
+    butterfly_30d DECIMAL(8, 6),
+
+    -- Cross-reference (denormalized for fast heat map queries)
+    rv_21d DECIMAL(8, 6),
+    rv_63d DECIMAL(8, 6),
+    vrp_30d DECIMAL(8, 6),
+    underlying_close DECIMAL(10, 4),
+
+    -- Day-over-day changes (computed during backfill)
+    atm_vol_30d_1d_chg DECIMAL(8, 6),
+    skew_25d_30d_1d_chg DECIMAL(8, 6),
+    term_slope_1d_chg DECIMAL(8, 6),
+
+    calculation_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(symbol, quote_date)
+);
+"""
+
+SURFACE_METRICS_HISTORY_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_smh_symbol_date ON surface_metrics_history(symbol, quote_date)",
+    "CREATE INDEX IF NOT EXISTS idx_smh_symbol ON surface_metrics_history(symbol)",
+]
+
+TRADE_JOURNAL_DDL = """
+CREATE TABLE IF NOT EXISTS trade_journal (
+    trade_id BIGINT PRIMARY KEY,
+
+    -- Entry
+    entry_date DATE NOT NULL,
+    symbol VARCHAR NOT NULL,
+    thesis TEXT NOT NULL,
+    category VARCHAR NOT NULL,
+    direction VARCHAR NOT NULL,
+    structure_description TEXT,
+
+    -- Entry levels
+    entry_iv_level DECIMAL(8, 6),
+    entry_skew_level DECIMAL(8, 6),
+    entry_underlying_price DECIMAL(10, 4),
+    entry_metric_value DECIMAL(10, 6),
+    entry_metric_name VARCHAR,
+
+    -- Target and stop
+    target_description TEXT,
+    stop_description TEXT,
+    time_horizon_days INTEGER,
+
+    -- Resolution
+    exit_date DATE,
+    exit_iv_level DECIMAL(8, 6),
+    exit_skew_level DECIMAL(8, 6),
+    exit_underlying_price DECIMAL(10, 4),
+    exit_metric_value DECIMAL(10, 6),
+
+    -- P&L
+    pnl_vol_points DECIMAL(8, 6),
+    pnl_direction_correct BOOLEAN,
+    outcome VARCHAR DEFAULT 'open',
+    outcome_notes TEXT,
+
+    -- Auto-populated context at entry (from surface_metrics_history)
+    entry_atm_vol_pctile DECIMAL(5, 2),
+    entry_skew_zscore DECIMAL(8, 6),
+    entry_vrp DECIMAL(8, 6),
+
+    -- Metadata
+    tags VARCHAR,
+    created_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE(symbol, entry_date, structure_description)
+);
+"""
+
+TRADE_JOURNAL_INDEXES = [
+    "CREATE INDEX IF NOT EXISTS idx_tj_symbol ON trade_journal(symbol)",
+    "CREATE INDEX IF NOT EXISTS idx_tj_outcome ON trade_journal(outcome)",
+    "CREATE INDEX IF NOT EXISTS idx_tj_entry_date ON trade_journal(entry_date)",
+]
+
 # Interest rate term structure table for forward price calculation fallback
 INTEREST_RATE_TERM_STRUCTURE_DDL = """
 CREATE TABLE IF NOT EXISTS interest_rate_term_structure (
@@ -240,6 +340,8 @@ SEQUENCES = [
     "CREATE SEQUENCE IF NOT EXISTS seq_rv_id START 1",
     "CREATE SEQUENCE IF NOT EXISTS seq_vrp_id START 1",
     "CREATE SEQUENCE IF NOT EXISTS seq_rate_id START 1",
+    "CREATE SEQUENCE IF NOT EXISTS seq_smh_id START 1",
+    "CREATE SEQUENCE IF NOT EXISTS seq_trade_id START 1",
 ]
 
 
@@ -270,6 +372,8 @@ def init_schema(conn: Optional[DuckDBPyConnection] = None) -> None:
         ("realized_volatility", REALIZED_VOLATILITY_DDL, REALIZED_VOLATILITY_INDEXES),
         ("vrp_metrics", VRP_METRICS_DDL, VRP_METRICS_INDEXES),
         ("interest_rate_term_structure", INTEREST_RATE_TERM_STRUCTURE_DDL, INTEREST_RATE_TERM_STRUCTURE_INDEXES),
+        ("surface_metrics_history", SURFACE_METRICS_HISTORY_DDL, SURFACE_METRICS_HISTORY_INDEXES),
+        ("trade_journal", TRADE_JOURNAL_DDL, TRADE_JOURNAL_INDEXES),
     ]
 
     for table_name, ddl, indexes in tables:
@@ -294,6 +398,8 @@ def drop_all_tables(conn: Optional[DuckDBPyConnection] = None) -> None:
     logger.warning("Dropping all tables...")
 
     tables = [
+        "trade_journal",
+        "surface_metrics_history",
         "vrp_metrics",
         "realized_volatility",
         "term_structure_params",
@@ -314,6 +420,8 @@ def drop_all_tables(conn: Optional[DuckDBPyConnection] = None) -> None:
         "seq_rv_id",
         "seq_vrp_id",
         "seq_rate_id",
+        "seq_smh_id",
+        "seq_trade_id",
     ]
 
     for seq in sequences:

@@ -7,6 +7,13 @@ from volsurf.analytics.realized_vol import (
     calculate_garman_klass_vol,
     calculate_parkinson_vol,
 )
+from volsurf.analytics.spot_vol_dynamics import (
+    SpotVolDynamicsAnalyzer,
+    SpotVolDynamicsResult,
+    calculate_leverage_effect,
+    calculate_skew_dynamics,
+    calculate_vol_of_vol,
+)
 from volsurf.analytics.surface_metrics import (
     SurfaceMetrics,
     SurfaceSummary,
@@ -19,6 +26,16 @@ from volsurf.analytics.term_structure import (
     TermStructureResult,
     fit_power_law,
     power_law,
+)
+from volsurf.analytics.surface_metrics_history import (
+    SurfaceMetricsHistoryCalculator,
+    SurfaceMetricsSnapshot,
+    RANKABLE_METRICS,
+)
+from volsurf.analytics.trade_journal import (
+    TradeEntry,
+    TradeJournalManager,
+    TradeResolution,
 )
 from volsurf.analytics.variance_risk_premium import (
     VRPCalculator,
@@ -44,6 +61,20 @@ __all__ = [
     "calculate_close_to_close_vol",
     "calculate_parkinson_vol",
     "calculate_garman_klass_vol",
+    # Spot-vol dynamics
+    "SpotVolDynamicsAnalyzer",
+    "SpotVolDynamicsResult",
+    "calculate_leverage_effect",
+    "calculate_skew_dynamics",
+    "calculate_vol_of_vol",
+    # Surface metrics history
+    "SurfaceMetricsHistoryCalculator",
+    "SurfaceMetricsSnapshot",
+    "RANKABLE_METRICS",
+    # Trade journal
+    "TradeJournalManager",
+    "TradeEntry",
+    "TradeResolution",
     # VRP
     "VRPCalculator",
     "VRPResult",

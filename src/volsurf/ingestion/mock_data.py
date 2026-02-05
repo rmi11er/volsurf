@@ -1,15 +1,18 @@
 """Mock data generator for testing without API access."""
 
 import math
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Optional
 
 import numpy as np
+import polars as pl
 from loguru import logger
 
 from volsurf.config.settings import get_settings
 from volsurf.models.schemas import (
+    IntradayOptionsChain,
+    IntradayOptionQuote,
     OptionQuote,
     OptionsChain,
     OptionType,
@@ -430,3 +433,234 @@ class MockDataGenerator:
             current += spacing
 
         return strikes
+
+
+class MockIntradayGenerator:
+    """
+    Generate mock intraday options chain data.
+
+    Extends MockDataGenerator with intraday effects:
+    - U-shaped volatility pattern (higher at open/close)
+    - Time-varying bid-ask spreads
+    - Intraday underlying price movement
+    """
+
+    # Market hours in minutes from midnight (ET)
+    MARKET_OPEN_MINUTES = 9 * 60 + 30  # 9:30 AM
+    MARKET_CLOSE_MINUTES = 16 * 60  # 4:00 PM
+    TRADING_MINUTES = MARKET_CLOSE_MINUTES - MARKET_OPEN_MINUTES  # 390 minutes
+
+    def __init__(self, base_generator: Optional[MockDataGenerator] = None):
+        self.base = base_generator or MockDataGenerator()
+
+    def _get_minutes_from_open(self, t: time) -> int:
+        """Get minutes since market open."""
+        time_minutes = t.hour * 60 + t.minute
+        return time_minutes - self.MARKET_OPEN_MINUTES
+
+    def _get_intraday_vol_multiplier(self, t: time) -> float:
+        """
+        Get intraday volatility multiplier.
+
+        U-shaped pattern: higher at open and close, lower mid-day.
+        Peak multiplier ~1.15 at open/close, trough ~0.90 at mid-day.
+        """
+        minutes_from_open = self._get_minutes_from_open(t)
+        midpoint = self.TRADING_MINUTES / 2  # 195 minutes
+
+        # Normalize to [-1, 1] range where 0 is midpoint
+        normalized = (minutes_from_open - midpoint) / midpoint
+
+        # U-shaped curve: higher at extremes
+        u_curve = normalized ** 2
+
+        # Scale: 0.90 at mid-day, 1.15 at open/close
+        return 0.90 + 0.25 * u_curve
+
+    def _get_intraday_spread_multiplier(self, t: time) -> float:
+        """
+        Get intraday spread multiplier.
+
+        Wider spreads at open (less liquidity), tightest mid-day,
+        slightly wider at close.
+        """
+        minutes_from_open = self._get_minutes_from_open(t)
+
+        # Open period (first 30 min): wider spreads
+        if minutes_from_open < 30:
+            return 1.3 + 0.2 * (30 - minutes_from_open) / 30
+
+        # Close period (last 30 min): slightly wider
+        if minutes_from_open > self.TRADING_MINUTES - 30:
+            remaining = self.TRADING_MINUTES - minutes_from_open
+            return 1.1 + 0.1 * (30 - remaining) / 30
+
+        # Mid-day: tightest spreads
+        return 1.0
+
+    def _get_intraday_price_offset(
+        self,
+        quote_date: date,
+        t: time,
+        base_price: float,
+    ) -> float:
+        """
+        Get intraday price offset from open.
+
+        Simulates realistic intraday price movement.
+        """
+        rng = np.random.default_rng(
+            int(quote_date.toordinal()) * 1000 + t.hour * 60 + t.minute
+        )
+
+        minutes_from_open = self._get_minutes_from_open(t)
+
+        # Random walk with mean reversion
+        daily_vol = 0.01  # 1% daily vol
+        minute_vol = daily_vol / math.sqrt(self.TRADING_MINUTES)
+
+        # Cumulative return with slight mean reversion
+        cumulative_return = 0.0
+        for _ in range(minutes_from_open):
+            shock = rng.normal(0, minute_vol)
+            mean_reversion = -0.05 * cumulative_return  # Pull toward zero
+            cumulative_return += shock + mean_reversion
+
+        return base_price * cumulative_return
+
+    def generate_intraday_chain(
+        self,
+        symbol: str,
+        target_date: date,
+        time_of_day: time,
+        base_underlying_price: Optional[float] = None,
+    ) -> pl.DataFrame:
+        """
+        Generate mock intraday options chain at a specific time.
+
+        Returns Polars DataFrame matching the format of ThetaIntradayClient.
+
+        Args:
+            symbol: Underlying symbol
+            target_date: Date for the chain
+            time_of_day: Time of day (ET)
+            base_underlying_price: Base underlying price (uses default if None)
+
+        Returns:
+            Polars DataFrame with intraday quotes
+        """
+        if base_underlying_price is None:
+            base_underlying_price = self.base.base_price
+
+        # Apply intraday price offset
+        price_offset = self._get_intraday_price_offset(
+            target_date, time_of_day, base_underlying_price
+        )
+        underlying_price = base_underlying_price + price_offset
+
+        # Get vol and spread multipliers
+        vol_mult = self._get_intraday_vol_multiplier(time_of_day)
+        spread_mult = self._get_intraday_spread_multiplier(time_of_day)
+
+        # Generate base chain using existing generator
+        base_chain = self.base.generate_options_chain(
+            symbol, target_date, underlying_price
+        )
+
+        # Create timestamp
+        timestamp = datetime.combine(target_date, time_of_day)
+
+        # Transform quotes with intraday effects
+        records = []
+        for quote in base_chain.quotes:
+            # Adjust implied vol for intraday pattern
+            if quote.implied_volatility:
+                adj_iv = float(quote.implied_volatility) * vol_mult
+            else:
+                adj_iv = self.base.base_volatility * vol_mult
+
+            # Recalculate price with adjusted vol
+            dte = (quote.expiration_date - target_date).days
+            tte_years = dte / 252
+
+            if tte_years > 0:
+                theo_price = self.base._black_scholes_price(
+                    underlying_price,
+                    float(quote.strike),
+                    tte_years,
+                    adj_iv,
+                    self.base.risk_free_rate,
+                    self.base.dividend_yield,
+                    quote.option_type == OptionType.CALL,
+                )
+
+                if theo_price < 0.01:
+                    continue
+
+                # Adjust spread for intraday pattern
+                if quote.bid and quote.ask:
+                    base_spread = float(quote.ask - quote.bid)
+                    adj_spread = base_spread * spread_mult
+                    mid = theo_price
+                    bid = max(0.01, mid - adj_spread / 2)
+                    ask = mid + adj_spread / 2
+                else:
+                    mid = theo_price
+                    bid = mid * 0.98
+                    ask = mid * 1.02
+
+                records.append({
+                    "symbol": symbol,
+                    "timestamp": timestamp,
+                    "expiration_date": quote.expiration_date,
+                    "strike": float(quote.strike),
+                    "option_type": quote.option_type.value,
+                    "bid": round(bid, 2),
+                    "ask": round(ask, 2),
+                    "bid_size": quote.volume // 10 + 1 if quote.volume else 10,
+                    "ask_size": quote.volume // 10 + 1 if quote.volume else 10,
+                    "mid": round((bid + ask) / 2, 2),
+                })
+
+        if not records:
+            return pl.DataFrame(schema={
+                "symbol": pl.Utf8,
+                "timestamp": pl.Datetime,
+                "expiration_date": pl.Date,
+                "strike": pl.Float64,
+                "option_type": pl.Utf8,
+                "bid": pl.Float64,
+                "ask": pl.Float64,
+                "bid_size": pl.Int64,
+                "ask_size": pl.Int64,
+                "mid": pl.Float64,
+            })
+
+        return pl.DataFrame(records)
+
+    def get_underlying_at_time(
+        self,
+        symbol: str,
+        target_date: date,
+        time_of_day: time,
+        base_price: Optional[float] = None,
+    ) -> Decimal:
+        """
+        Get mock underlying price at a specific time.
+
+        Args:
+            symbol: Stock symbol
+            target_date: Date
+            time_of_day: Time of day (ET)
+            base_price: Base price (uses default if None)
+
+        Returns:
+            Underlying price at the specified time
+        """
+        if base_price is None:
+            base_price = self.base.base_price
+
+        price_offset = self._get_intraday_price_offset(
+            target_date, time_of_day, base_price
+        )
+        return Decimal(str(round(base_price + price_offset, 2)))

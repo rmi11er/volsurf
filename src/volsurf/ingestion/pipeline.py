@@ -107,6 +107,79 @@ class IngestionPipeline:
 
         return records_inserted
 
+    def retry_missing_dates(
+        self,
+        symbol: str,
+        dates: list[date],
+        timeout: float = 120.0,
+    ) -> dict[str, int]:
+        """
+        Retry fetching specific missing dates.
+
+        Args:
+            symbol: Underlying symbol
+            dates: List of specific dates to retry
+            timeout: Timeout for each request in seconds
+
+        Returns:
+            Dictionary with statistics:
+            {days_processed, records_inserted, days_failed}
+        """
+        conn = get_connection()
+        init_schema(conn)
+
+        stats = {
+            "days_processed": 0,
+            "records_inserted": 0,
+            "days_failed": 0,
+        }
+
+        logger.info(f"Retrying {len(dates)} missing dates for {symbol}")
+
+        # Get underlying prices once
+        if dates:
+            start_date = min(dates)
+            end_date = max(dates)
+            underlying_df = self.client.get_underlying_eod(symbol, start_date, end_date)
+            underlying_prices = {}
+            if not underlying_df.is_empty():
+                for row in underlying_df.iter_rows(named=True):
+                    underlying_prices[row["date"]] = row["close"]
+
+        for target_date in sorted(dates):
+            logger.info(f"Retrying {target_date}...")
+            try:
+                # Use longer timeout for retry
+                chain_df = self.client.get_options_chain(symbol, target_date, timeout=timeout)
+
+                if chain_df.is_empty():
+                    logger.warning(f"No data for {target_date}")
+                    stats["days_failed"] += 1
+                    continue
+
+                underlying_price = underlying_prices.get(target_date, 500.0)
+                chain_df = chain_df.with_columns(
+                    pl.lit(underlying_price).alias("underlying_price")
+                )
+                chain_df = apply_liquidity_filters(chain_df, underlying_price, self.settings)
+
+                records = self._insert_options_chain(conn, chain_df)
+                stats["records_inserted"] += records
+                stats["days_processed"] += 1
+                logger.info(f"  Inserted {records} records for {target_date}")
+
+            except Exception as e:
+                logger.error(f"Failed to fetch {target_date}: {e}")
+                stats["days_failed"] += 1
+
+        logger.info(
+            f"Retry complete: {stats['days_processed']} days, "
+            f"{stats['records_inserted']} records, "
+            f"{stats['days_failed']} failed"
+        )
+
+        return stats
+
     def backfill_historical(
         self,
         symbol: str,
@@ -162,15 +235,10 @@ class IngestionPipeline:
                 underlying_prices[row["date"]] = row["close"]
             self._insert_underlying_prices(conn, underlying_df)
 
-        # Iterate through historical chains
+        # Iterate through historical chains (skipping existing dates BEFORE API call)
         for quote_date, chain_df in self.client.iter_historical_chains(
-            symbol, start_date, end_date
+            symbol, start_date, end_date, skip_dates=existing_dates if skip_existing else None
         ):
-            if quote_date in existing_dates:
-                logger.debug(f"Skipping {quote_date} - data exists")
-                stats["days_skipped"] += 1
-                continue
-
             try:
                 if chain_df.is_empty():
                     logger.debug(f"No data for {quote_date}")
@@ -202,6 +270,9 @@ class IngestionPipeline:
             except Exception as e:
                 logger.error(f"Failed to process {quote_date}: {e}")
                 stats["days_failed"] += 1
+
+        # Count skipped days from existing_dates
+        stats["days_skipped"] = len(existing_dates)
 
         logger.info(
             f"Backfill complete: {stats['days_processed']} days, "

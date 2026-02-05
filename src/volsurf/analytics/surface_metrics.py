@@ -360,3 +360,117 @@ class SurfaceMetrics:
         if hasattr(latest, "date"):
             latest = latest.date()
         return latest
+
+    def get_svi_params_timeseries(
+        self, symbol: str, start_date: date, end_date: date, tte_target_days: int = 30
+    ) -> pd.DataFrame:
+        """
+        Get SVI parameters time series for a specific tenor.
+
+        Interpolates parameters if exact tenor not available.
+
+        Args:
+            symbol: Ticker symbol
+            start_date: Start of range
+            end_date: End of range
+            tte_target_days: Target tenor in trading days
+
+        Returns:
+            DataFrame with date and SVI parameters (a, b, rho, m, sigma)
+        """
+        conn = get_connection()
+
+        tte_target_years = tte_target_days / 252.0
+
+        query = """
+            SELECT quote_date, tte_years,
+                   svi_a, svi_b, svi_rho, svi_m, svi_sigma,
+                   atm_vol, skew_25delta, rmse
+            FROM fitted_surfaces
+            WHERE symbol = ?
+              AND quote_date >= ?
+              AND quote_date <= ?
+            ORDER BY quote_date, tte_years
+        """
+        df = conn.execute(query, [symbol, start_date, end_date]).fetchdf()
+
+        if df.empty:
+            return pd.DataFrame(columns=[
+                "date", "svi_a", "svi_b", "svi_rho", "svi_m", "svi_sigma",
+                "atm_vol", "skew_25delta", "rmse", "tte_years"
+            ])
+
+        results = []
+        for quote_date, group in df.groupby("quote_date"):
+            tte_values = group["tte_years"].values.astype(float)
+
+            # Find closest or interpolate
+            if tte_target_years <= tte_values[0]:
+                row = group.iloc[0]
+            elif tte_target_years >= tte_values[-1]:
+                row = group.iloc[-1]
+            else:
+                # Linear interpolation for each parameter
+                idx = np.searchsorted(tte_values, tte_target_years)
+                t1, t2 = tte_values[idx - 1], tte_values[idx]
+                weight = (tte_target_years - t1) / (t2 - t1)
+
+                row1 = group.iloc[idx - 1]
+                row2 = group.iloc[idx]
+
+                results.append({
+                    "date": quote_date,
+                    "svi_a": float(row1["svi_a"]) * (1 - weight) + float(row2["svi_a"]) * weight,
+                    "svi_b": float(row1["svi_b"]) * (1 - weight) + float(row2["svi_b"]) * weight,
+                    "svi_rho": float(row1["svi_rho"]) * (1 - weight) + float(row2["svi_rho"]) * weight,
+                    "svi_m": float(row1["svi_m"]) * (1 - weight) + float(row2["svi_m"]) * weight,
+                    "svi_sigma": float(row1["svi_sigma"]) * (1 - weight) + float(row2["svi_sigma"]) * weight,
+                    "atm_vol": float(row1["atm_vol"]) * (1 - weight) + float(row2["atm_vol"]) * weight,
+                    "skew_25delta": float(row1["skew_25delta"]) * (1 - weight) + float(row2["skew_25delta"]) * weight,
+                    "rmse": float(row1["rmse"]) * (1 - weight) + float(row2["rmse"]) * weight,
+                    "tte_years": tte_target_years,
+                })
+                continue
+
+            results.append({
+                "date": quote_date,
+                "svi_a": float(row["svi_a"]),
+                "svi_b": float(row["svi_b"]),
+                "svi_rho": float(row["svi_rho"]),
+                "svi_m": float(row["svi_m"]),
+                "svi_sigma": float(row["svi_sigma"]),
+                "atm_vol": float(row["atm_vol"]) if row["atm_vol"] else None,
+                "skew_25delta": float(row["skew_25delta"]) if row["skew_25delta"] else None,
+                "rmse": float(row["rmse"]) if row["rmse"] else None,
+                "tte_years": float(row["tte_years"]),
+            })
+
+        return pd.DataFrame(results)
+
+    def get_svi_params_term_structure(
+        self, symbol: str, quote_date: date
+    ) -> pd.DataFrame:
+        """
+        Get SVI parameters across the term structure for a single date.
+
+        Args:
+            symbol: Ticker symbol
+            quote_date: Date to query
+
+        Returns:
+            DataFrame with tte_years and all SVI params per expiration
+        """
+        conn = get_connection()
+
+        query = """
+            SELECT expiration_date, tte_years,
+                   svi_a, svi_b, svi_rho, svi_m, svi_sigma,
+                   atm_vol, skew_25delta, rmse, num_points
+            FROM fitted_surfaces
+            WHERE symbol = ?
+              AND quote_date = ?
+            ORDER BY tte_years
+        """
+        df = conn.execute(query, [symbol, quote_date]).fetchdf()
+
+        return df
