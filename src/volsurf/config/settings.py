@@ -68,6 +68,19 @@ class Settings(BaseSettings):
         description="Symbols to track (override via WATCHLIST env var as comma-separated)",
     )
 
+    # Macro context symbols: display_name -> yfinance ticker
+    macro_symbols: dict[str, str] = Field(
+        default={
+            "VIX": "^VIX",
+            "VIX9D": "^VIX9D",
+            "VVIX": "^VVIX",
+            "TLT": "TLT",
+            "HYG": "HYG",
+            "UUP": "UUP",
+        },
+        description="Macro symbols for cross-asset context (display_name -> yfinance ticker)",
+    )
+
     # Logging
     log_level: str = Field(default="INFO", description="Logging level")
     log_file: Path = Field(default=Path("logs/volsurf.log"), description="Log file path")

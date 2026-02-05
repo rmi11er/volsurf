@@ -57,8 +57,11 @@ def apply_liquidity_filters(
         & (pl.col("mid") > 0)
         # Bid-ask spread
         & (pl.col("spread_pct") <= settings.max_bid_ask_spread_pct)
-        # Open interest
-        & (pl.col("open_interest") >= settings.min_open_interest)
+        # Open interest (NULL OI passes — free tier may not have OI data)
+        & (
+            pl.col("open_interest").is_null()
+            | (pl.col("open_interest") >= settings.min_open_interest)
+        )
         # Days to expiration
         & (pl.col("dte") >= settings.min_dte)
         & (pl.col("dte") <= settings.max_dte)

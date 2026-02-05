@@ -55,6 +55,7 @@ def main() -> None:
         "Navigation",
         [
             "Watchlist",
+            "Macro Context",
             "Overview",
             "Surface Viewer",
             "Term Structure",
@@ -65,9 +66,12 @@ def main() -> None:
         ],
     )
 
-    # Pages that manage their own data scope
+    # Pages that manage their own data scope (cross-symbol)
     if page == "Watchlist":
         show_watchlist()
+        return
+    if page == "Macro Context":
+        show_macro_context()
         return
     if page == "Trade Journal":
         show_trade_journal_placeholder()
@@ -205,6 +209,12 @@ def show_watchlist() -> None:
     from volsurf.web.components.watchlist import render_watchlist
 
     render_watchlist()
+
+
+def show_macro_context() -> None:
+    from volsurf.web.components.macro_context import render_macro_context
+
+    render_macro_context()
 
 
 def show_trade_journal_placeholder() -> None:

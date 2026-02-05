@@ -282,8 +282,12 @@ class ThetaTerminalClient:
         if eod_df.is_empty():
             return eod_df
 
-        # Get open interest
-        oi_df = self.get_options_open_interest(symbol, quote_date)
+        # Get open interest (graceful failure — OI requires paid tier for recent dates)
+        try:
+            oi_df = self.get_options_open_interest(symbol, quote_date)
+        except Exception as e:
+            logger.debug(f"OI fetch failed for {symbol} on {quote_date} (non-fatal): {e}")
+            oi_df = pl.DataFrame()
 
         # Join EOD with OI
         if not oi_df.is_empty():

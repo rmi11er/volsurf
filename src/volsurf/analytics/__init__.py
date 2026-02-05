@@ -37,6 +37,7 @@ from volsurf.analytics.trade_journal import (
     TradeJournalManager,
     TradeResolution,
 )
+from volsurf.analytics.macro_context import MacroContextCalculator
 from volsurf.analytics.variance_risk_premium import (
     VRPCalculator,
     VRPResult,
@@ -75,6 +76,8 @@ __all__ = [
     "TradeJournalManager",
     "TradeEntry",
     "TradeResolution",
+    # Macro context
+    "MacroContextCalculator",
     # VRP
     "VRPCalculator",
     "VRPResult",
