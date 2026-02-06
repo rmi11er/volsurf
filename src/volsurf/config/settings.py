@@ -64,7 +64,12 @@ class Settings(BaseSettings):
 
     # Watchlist
     watchlist: list[str] = Field(
-        default=["SPY", "QQQ", "GLD", "SLV", "NVDA", "GOOG", "TSLA", "PLTR", "NFLX", "AMD", "GME"],
+        default=[
+            "SPY", "QQQ", "GLD", "SLV",
+            "NVDA", "TSLA", "PLTR", "AMZN", "MSTR", "AMD", "MSFT", "ET", "GOOGL", "AAPL",
+            "ORCL", "GOOG", "COIN", "NFLX", "HOOD", "IREN", "SOFI", "PYPL", "MARA", "META",
+            "IBIT", "ETHA", "TQQQ", "GME",
+        ],
         description="Symbols to track (override via WATCHLIST env var as comma-separated)",
     )
 

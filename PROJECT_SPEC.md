@@ -2,7 +2,7 @@
 
 Personal vol training tool. Daily loop: scan watchlist → spot mispricings → log hypothetical trades → track accuracy. Three modules built in phases, with Phases 1-3 constituting the MVP.
 
-**Watchlist**: SPY, QQQ, GLD, SLV, NVDA, GOOG, TSLA, PLTR, NFLX, AMD, GME
+**Watchlist**: SPY, QQQ, GLD, SLV, NVDA, TSLA, PLTR, AMZN, MSTR, AMD, MSFT, ET, GOOGL, AAPL, ORCL, GOOG, COIN, NFLX, HOOD, IREN, SOFI, PYPL, MARA, META, IBIT, ETHA, TQQQ, GME
 
 ---
 
