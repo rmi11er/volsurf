@@ -6,6 +6,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from volsurf.analytics.live_snapshot import LiveSnapshotManager, LiveSnapshotResult
 from volsurf.analytics.surface_metrics_history import SurfaceMetricsHistoryCalculator
 from volsurf.config.settings import get_settings
 
@@ -21,33 +22,22 @@ def render_watchlist() -> None:
     all_latest = calc.get_all_symbols_latest()
 
     if all_latest.empty:
-        st.warning("No surface metrics history data. Run batch commands first:")
+        st.warning("No surface metrics history data. Run the BTC-first flow first:")
         st.code(
-            "volsurf batch ingest --start 2024-01-01 --end 2025-12-31\n"
-            "volsurf batch fit --start 2024-01-01 --end 2025-12-31\n"
-            "volsurf batch analyze --start 2024-01-01 --end 2025-12-31"
+            "volsurf ingest daily BTC\n"
+            "volsurf fit surfaces BTC\n"
+            "volsurf analyze realized-vol BTC\n"
+            "volsurf analyze vrp BTC\n"
+            "volsurf batch analyze --start 2026-01-01 --end 2026-12-31 --symbols BTC"
         )
         return
 
-    # Target date = most recent date with data
-    target_date = all_latest["quote_date"].max()
-    if hasattr(target_date, "date"):
-        target_date = target_date.date()
+    # Target date = most recent date with data (for EOD fallback)
+    eod_target_date = all_latest["quote_date"].max()
+    if hasattr(eod_target_date, "date"):
+        eod_target_date = eod_target_date.date()
 
-    # Controls
-    col_info, col_lb = st.columns([3, 1])
-    with col_info:
-        st.caption(f"Data as of **{target_date}**")
-    with col_lb:
-        lookback = st.selectbox(
-            "Percentile lookback",
-            options=[30, 60, 90, 252],
-            index=3,
-            format_func=lambda x: f"{x}d",
-            key="wl_lookback",
-        )
-
-    # Which symbols have data on target_date?
+    # Which symbols have EOD data?
     symbols_with_data = set(all_latest["symbol"].tolist())
     symbols_to_show = [s for s in symbols if s in symbols_with_data]
     missing = [s for s in symbols if s not in symbols_with_data]
@@ -56,7 +46,43 @@ def render_watchlist() -> None:
         st.warning("No watchlist symbols have surface metrics data yet.")
         return
 
-    heatmap_df = calc.get_watchlist_heatmap_data(symbols_to_show, target_date, lookback_days=lookback)
+    # Controls row
+    col_info, col_lb, col_refresh = st.columns([3, 1, 1])
+    with col_lb:
+        lookback = st.selectbox(
+            "Percentile lookback",
+            options=[30, 60, 90, 252],
+            index=3,
+            format_func=lambda x: f"{x}d",
+            key="wl_lookback",
+        )
+    with col_refresh:
+        st.markdown("<br>", unsafe_allow_html=True)
+        refresh_clicked = st.button("Refresh Live", key="wl_refresh")
+
+    # ---- Live snapshot logic ----
+    live_result = _maybe_fetch_live(symbols_to_show, refresh_clicked)
+
+    if live_result and live_result.snapshots:
+        # Build heatmap from live data
+        heatmap_df = _build_live_heatmap_df(
+            live_result, symbols_to_show, calc, eod_target_date, lookback,
+        )
+        ts_label = live_result.timestamp.strftime("%H:%M ET")
+        with col_info:
+            st.caption(f"Live as of **{ts_label}**")
+        if live_result.errors:
+            with st.expander(f"{len(live_result.errors)} symbol(s) fell back to EOD"):
+                for sym, err in sorted(live_result.errors.items()):
+                    st.text(f"{sym}: {err}")
+    else:
+        # Pure EOD fallback
+        heatmap_df = calc.get_watchlist_heatmap_data(symbols_to_show, eod_target_date, lookback_days=lookback)
+        reason = ""
+        if "live_fallback_reason" in st.session_state:
+            reason = f" ({st.session_state.live_fallback_reason})"
+        with col_info:
+            st.caption(f"Data as of **{eod_target_date}**{reason}")
 
     if heatmap_df.empty:
         st.warning("No heatmap data returned for the target date.")
@@ -72,11 +98,109 @@ def render_watchlist() -> None:
     st.markdown("---")
     detail_sym = st.selectbox("Symbol detail", symbols_to_show, index=0, key="wl_detail")
 
-    enriched = calc.get_enriched_snapshot(detail_sym, target_date)
+    enriched = calc.get_enriched_snapshot(detail_sym, eod_target_date)
     if enriched:
-        _render_detail_card(detail_sym, enriched, calc, target_date)
+        _render_detail_card(detail_sym, enriched, calc, eod_target_date)
     else:
-        st.info(f"No enriched snapshot available for {detail_sym} on {target_date}.")
+        st.info(f"No enriched snapshot available for {detail_sym} on {eod_target_date}.")
+
+
+# ---------------------------------------------------------------------------
+# Live snapshot helpers
+# ---------------------------------------------------------------------------
+
+def _maybe_fetch_live(
+    symbols: list[str], force_refresh: bool,
+) -> LiveSnapshotResult | None:
+    """Auto-fetch live snapshots on first load, or on manual refresh.
+
+    Returns the LiveSnapshotResult if live data is available, else None.
+    Caches in st.session_state to survive re-renders.
+    """
+    # Already cached and no refresh requested
+    if "live_result" in st.session_state and not force_refresh:
+        return st.session_state.live_result
+
+    mgr = LiveSnapshotManager()
+
+    # Check terminal availability
+    try:
+        terminal_ok = mgr.check_terminal()
+    except Exception:
+        terminal_ok = False
+
+    if not terminal_ok:
+        st.session_state.live_fallback_reason = "terminal unavailable"
+        st.session_state.live_result = None
+        return None
+
+    # Fetch with progress bar
+    progress = st.progress(0, text="Connecting to Theta Terminal...")
+    status_text = st.empty()
+
+    def _on_progress(done: int, total: int, sym: str) -> None:
+        progress.progress(done / total, text=f"Fetching live snapshot... ({done}/{total} {sym})")
+        status_text.caption(f"{sym} done")
+
+    live_result = mgr.fetch_all(symbols, progress_callback=_on_progress)
+    progress.empty()
+    status_text.empty()
+
+    if not live_result.snapshots:
+        st.session_state.live_fallback_reason = "market closed"
+        st.session_state.live_result = None
+        return None
+
+    st.session_state.live_result = live_result
+    st.session_state.pop("live_fallback_reason", None)
+    return live_result
+
+
+def _build_live_heatmap_df(
+    live_result: LiveSnapshotResult,
+    symbols: list[str],
+    calc: SurfaceMetricsHistoryCalculator,
+    eod_target_date: date,
+    lookback_days: int,
+) -> pd.DataFrame:
+    """Build a heatmap DataFrame from live snapshots, falling back to EOD per-symbol.
+
+    Computes percentile ranks and z-scores against the DB history.
+    """
+    mgr = LiveSnapshotManager()
+    enrichment = mgr.enrich_with_percentiles(live_result.snapshots, lookback_days)
+
+    rows = []
+    for sym in symbols:
+        snap = live_result.snapshots.get(sym)
+        if snap is None:
+            # Fall back to EOD for this symbol
+            eod_df = calc.get_watchlist_heatmap_data([sym], eod_target_date, lookback_days=lookback_days)
+            if not eod_df.empty:
+                rows.append(eod_df.iloc[0].to_dict())
+            continue
+
+        enr = enrichment.get(sym, {})
+        pctiles = enr.get("pctile", {})
+        zscores = enr.get("zscore", {})
+
+        rows.append({
+            "symbol": sym,
+            "underlying_close": snap.underlying_close,
+            "atm_vol_30d": snap.atm_vol_30d,
+            "atm_vol_30d_pctile": pctiles.get("atm_vol_30d"),
+            "skew_25d_30d": snap.skew_25d_30d,
+            "skew_25d_30d_zscore": zscores.get("skew_25d_30d"),
+            "term_slope": snap.term_slope,
+            "vrp_30d": snap.vrp_30d,
+            "butterfly_30d": snap.butterfly_30d,
+            "atm_vol_30d_1d_chg": snap.atm_vol_30d_1d_chg,
+            "skew_25d_30d_1d_chg": snap.skew_25d_30d_1d_chg,
+        })
+
+    if not rows:
+        return pd.DataFrame()
+    return pd.DataFrame(rows)
 
 
 # ---------------------------------------------------------------------------

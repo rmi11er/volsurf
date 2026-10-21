@@ -10,6 +10,7 @@ import pandas as pd
 from loguru import logger
 
 from volsurf.analytics.surface_metrics import get_atm_vol_from_svi, get_vol_at_moneyness
+from volsurf.config.settings import get_settings
 from volsurf.database.connection import get_connection
 
 # Columns that support percentile/z-score queries (validated to prevent SQL injection)
@@ -54,6 +55,9 @@ class SurfaceMetricsSnapshot:
 
 class SurfaceMetricsHistoryCalculator:
     """Computes and stores daily surface metric snapshots at standard tenors."""
+
+    def __init__(self) -> None:
+        self.settings = get_settings()
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -180,11 +184,13 @@ class SurfaceMetricsHistoryCalculator:
             (60, "atm_vol_60d", "skew_25d_60d"),
             (90, "atm_vol_90d", "skew_25d_90d"),
         ]:
-            target_tte = tenor_days / 252.0
+            target_tte = tenor_days / float(self.settings.annualization_days_per_year)
             setattr(snap, atm_attr, self._sanitize(self._interpolate_metric(tte, atm_vols, target_tte)))
             setattr(snap, skew_attr, self._sanitize(self._interpolate_metric(tte, skews, target_tte)))
 
-        snap.butterfly_30d = self._sanitize(self._interpolate_metric(tte, butterflies, 30 / 252.0))
+        snap.butterfly_30d = self._sanitize(
+            self._interpolate_metric(tte, butterflies, 30 / float(self.settings.annualization_days_per_year))
+        )
 
         if snap.atm_vol_90d is not None and snap.atm_vol_30d is not None:
             snap.term_slope = self._sanitize(snap.atm_vol_90d - snap.atm_vol_30d)

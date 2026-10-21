@@ -8,6 +8,7 @@ import pytest
 
 from volsurf.config.settings import Settings
 from volsurf.database.schema import init_schema
+from volsurf.ingestion.deribit_client import DeribitClient
 from volsurf.ingestion.theta_client import ThetaDataClient
 from volsurf.ingestion.pipeline import IngestionPipeline
 
@@ -17,7 +18,18 @@ def mock_settings() -> Settings:
     """Create settings that use mock data."""
     # Explicitly set theta_username=None to override .env and force mock mode
     return Settings(
+        data_provider="theta",
         theta_username=None,
+        min_open_interest=10,
+        max_bid_ask_spread_pct=0.30,
+    )
+
+
+@pytest.fixture
+def deribit_settings() -> Settings:
+    """Create settings that use the Deribit public API."""
+    return Settings(
+        data_provider="deribit",
         min_open_interest=10,
         max_bid_ask_spread_pct=0.30,
     )
@@ -222,3 +234,75 @@ class TestIngestionPipeline:
             "SELECT COUNT(*) FROM underlying_prices WHERE symbol = 'SPY'"
         ).fetchone()
         assert result[0] > 0
+
+
+class TestDeribitClient:
+    """Tests for the Deribit crypto client."""
+
+    def test_non_today_snapshot_returns_empty(self, deribit_settings):
+        """Historical option snapshots should return empty until backfill support exists."""
+        client = DeribitClient(deribit_settings)
+        try:
+            df = client.get_options_chain("BTC", date(2024, 12, 13))
+            assert isinstance(df, pl.DataFrame)
+            assert df.is_empty()
+        finally:
+            client.close()
+
+    def test_options_chain_maps_deribit_snapshot(self, deribit_settings, monkeypatch):
+        """Current Deribit snapshot should map into the generic options schema."""
+        client = DeribitClient(deribit_settings)
+        today = client._today_utc()
+
+        def fake_get_instruments(symbol: str):
+            assert symbol == "BTC"
+            return [
+                {
+                    "instrument_name": "BTC-30DEC26-100000-C",
+                    "expiration_timestamp": 1798588800000,
+                    "strike": 100000,
+                    "option_type": "call",
+                    "kind": "option",
+                }
+            ]
+
+        def fake_request(method: str, params: dict[str, object]):
+            if method == "public/get_book_summary_by_currency":
+                return [
+                    {
+                        "instrument_name": "BTC-30DEC26-100000-C",
+                        "underlying_price": 100000.0,
+                        "bid_price": 0.05,
+                        "ask_price": 0.06,
+                        "last": 0.055,
+                        "mark_price": 0.056,
+                        "mark_iv": 65.0,
+                        "volume": 4.2,
+                    }
+                ]
+            raise AssertionError(f"Unexpected method: {method}")
+
+        monkeypatch.setattr(client, "get_instruments", fake_get_instruments)
+        monkeypatch.setattr(client, "_request", fake_request)
+
+        try:
+            df = client.get_options_chain("BTC", today)
+            assert len(df) == 1
+            row = df.to_dicts()[0]
+            assert row["symbol"] == "BTC"
+            assert row["option_type"] == "CALL"
+            assert row["strike"] == 100000.0
+            assert row["bid"] == 5000.0
+            assert row["ask"] == 6000.0
+            assert row["mid"] == 5500.0
+            assert row["implied_volatility"] == 0.65
+        finally:
+            client.close()
+
+    def test_pipeline_uses_deribit_client(self, deribit_settings):
+        """Ingestion pipeline should select the Deribit client when configured."""
+        pipeline = IngestionPipeline(deribit_settings)
+        try:
+            assert isinstance(pipeline.client, DeribitClient)
+        finally:
+            pipeline.client.close()

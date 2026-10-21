@@ -33,7 +33,7 @@ def render_surface_viewer(symbol: str, selected_date: date) -> None:
 
     if surfaces_df.empty:
         st.warning(f"No fitted surfaces found for {symbol} on {selected_date}")
-        st.info("Run surface fitting first: `volsurf fit surfaces SPY --date <date>`")
+        st.info("Run surface fitting first: `volsurf fit surfaces BTC --date <date>`")
         return
 
     # Tabs for different views

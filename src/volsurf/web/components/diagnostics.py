@@ -512,4 +512,4 @@ def render_data_coverage(symbol: str) -> None:
         with col3:
             st.metric("Avg RMSE", f"{fitted_df['avg_rmse'].mean():.4%}")
     else:
-        st.info("No fitted surfaces yet. Run: `volsurf fit batch SPY --start <date> --end <date>`")
+        st.info("No fitted surfaces yet. Run: `volsurf fit surfaces BTC --date <date>`")

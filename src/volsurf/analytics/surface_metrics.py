@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from volsurf.config.settings import get_settings
 from volsurf.database.connection import get_connection
 
 
@@ -94,6 +95,9 @@ def get_vol_at_moneyness(
 class SurfaceMetrics:
     """Calculator for surface-derived metrics."""
 
+    def __init__(self) -> None:
+        self.settings = get_settings()
+
     def get_surface_summary(self, symbol: str, quote_date: date) -> SurfaceSummary:
         """
         Get summary metrics for all surfaces on a date.
@@ -173,7 +177,7 @@ class SurfaceMetrics:
         """
         conn = get_connection()
 
-        tte_target_years = tte_target_days / 252.0
+        tte_target_years = tte_target_days / float(self.settings.annualization_days_per_year)
 
         # Get all surfaces in range, then interpolate per date
         query = """
@@ -225,7 +229,7 @@ class SurfaceMetrics:
         """
         conn = get_connection()
 
-        tte_target_years = tte_target_days / 252.0
+        tte_target_years = tte_target_days / float(self.settings.annualization_days_per_year)
 
         query = """
             SELECT quote_date, tte_years, skew_25delta
@@ -380,7 +384,7 @@ class SurfaceMetrics:
         """
         conn = get_connection()
 
-        tte_target_years = tte_target_days / 252.0
+        tte_target_years = tte_target_days / float(self.settings.annualization_days_per_year)
 
         query = """
             SELECT quote_date, tte_years,

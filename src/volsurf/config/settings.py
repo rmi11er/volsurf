@@ -16,6 +16,11 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    # Data provider
+    data_provider: str = Field(
+        default="deribit", description="Market data provider: theta or deribit"
+    )
+
     # Theta Data Terminal (local)
     theta_terminal_host: str = Field(
         default="localhost", description="Theta Terminal host"
@@ -34,9 +39,9 @@ class Settings(BaseSettings):
     )
 
     # Data Ingestion
-    default_symbol: str = Field(default="SPY", description="Default symbol for ingestion")
+    default_symbol: str = Field(default="BTC", description="Default symbol for ingestion")
     ingestion_start_date: str = Field(
-        default="2020-01-01", description="Default start date for backfill"
+        default="2024-01-01", description="Default start date for backfill"
     )
 
     # Liquidity Filters
@@ -65,10 +70,7 @@ class Settings(BaseSettings):
     # Watchlist
     watchlist: list[str] = Field(
         default=[
-            "SPY", "QQQ", "GLD", "SLV",
-            "NVDA", "TSLA", "PLTR", "AMZN", "MSTR", "AMD", "MSFT", "ET", "GOOGL", "AAPL",
-            "ORCL", "GOOG", "COIN", "NFLX", "HOOD", "IREN", "SOFI", "PYPL", "MARA", "META",
-            "IBIT", "ETHA", "TQQQ", "GME",
+            "BTC", "ETH", "SOL",
         ],
         description="Symbols to track (override via WATCHLIST env var as comma-separated)",
     )
@@ -93,6 +95,16 @@ class Settings(BaseSettings):
     # Web Dashboard
     streamlit_port: int = Field(default=8501, description="Streamlit dashboard port")
 
+    # Deribit
+    deribit_base_url: str = Field(
+        default="https://www.deribit.com/api/v2",
+        description="Deribit API base URL",
+    )
+    deribit_quote_in_usd: bool = Field(
+        default=True,
+        description="Convert Deribit option premiums from underlying units to USD-equivalent",
+    )
+
     @property
     def theta_terminal_url(self) -> str:
         """Return the full Theta Terminal base URL."""
@@ -100,8 +112,22 @@ class Settings(BaseSettings):
 
     @property
     def use_mock_data(self) -> bool:
-        """Return True if no username is configured (use mock data)."""
-        return self.theta_username is None
+        """Return True if the active provider should use mock data."""
+        if self.data_provider.lower() == "theta":
+            return self.theta_username is None
+        return False
+
+    @property
+    def normalized_data_provider(self) -> str:
+        """Return the active provider in normalized form."""
+        return self.data_provider.strip().lower()
+
+    @property
+    def annualization_days_per_year(self) -> int:
+        """Return the effective annualization convention for the active provider."""
+        if self.normalized_data_provider == "deribit" and self.trading_days_per_year == 252:
+            return 365
+        return self.trading_days_per_year
 
 
 # Global settings instance

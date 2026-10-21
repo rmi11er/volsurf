@@ -44,7 +44,7 @@ def init_db() -> None:
 
 
 @app.command()
-def dashboard(symbol: str = typer.Argument("SPY", help="Symbol to display")) -> None:
+def dashboard(symbol: str = typer.Argument("BTC", help="Symbol to display")) -> None:
     """Launch the terminal dashboard."""
     console.print(f"[yellow]Dashboard for {symbol} - coming in Phase 4[/yellow]")
 

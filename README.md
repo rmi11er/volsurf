@@ -1,12 +1,12 @@
 # volsurf
 
-Options data lake with volatility surface fitting.
+Crypto options data lake with volatility surface fitting.
 
 ## Overview
 
-A data lake system for options chain data with fitted volatility surfaces, enabling sophisticated volatility trading analysis. The system ingests historical and ongoing options data, fits SVI volatility surface models, and provides both programmatic and visual interfaces for analysis.
+A data lake system for options chain data with fitted volatility surfaces, enabling sophisticated volatility trading analysis. The system ingests historical and ongoing crypto options data, fits SVI volatility surface models, and provides both programmatic and visual interfaces for analysis.
 
-**MVP Scope:** SPY options only, end-of-day updates, SVI surface fitting
+**Current First Pass:** BTC on Deribit, end-of-day snapshots, SVI surface fitting
 
 ## Quick Start
 
@@ -17,14 +17,18 @@ uv sync
 # Initialize the database
 uv run volsurf init-db
 
-# Run daily ingestion (uses mock data if no API key configured)
-uv run volsurf ingest daily SPY
+# Run daily ingestion for BTC
+uv run volsurf ingest daily BTC
 
-# Backfill historical data
-uv run volsurf ingest backfill SPY --start 2024-01-01 --end 2024-12-16
+# Fit surfaces
+uv run volsurf fit surfaces BTC
 
-# Check data coverage
-uv run volsurf ingest status
+# Run analytics
+uv run volsurf analyze realized-vol BTC
+uv run volsurf analyze vrp BTC
+
+# Launch the dashboard
+uv run volsurf web
 ```
 
 ## Configuration
@@ -36,7 +40,9 @@ cp .env.example .env
 ```
 
 Key settings:
-- `THETA_API_KEY`: Your Theta Data API key (leave blank to use mock data)
+- `DATA_PROVIDER`: `deribit` for crypto or `theta` for the old equities path
+- `DEFAULT_SYMBOL`: Default underlying symbol, now `BTC`
+- `WATCHLIST`: Comma-separated crypto watchlist, e.g. `BTC,ETH,SOL`
 - `DUCKDB_PATH`: Path to the database file
 
 ## Project Structure

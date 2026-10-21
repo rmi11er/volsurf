@@ -37,7 +37,7 @@ def parse_date(date_str: Optional[str]) -> Optional[date]:
 
 @app.command("realized-vol")
 def realized_vol(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to calculate (YYYY-MM-DD), defaults to latest"
     ),
@@ -85,7 +85,7 @@ def realized_vol(
 
 @app.command()
 def vrp(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to analyze (YYYY-MM-DD), defaults to latest"
     ),
@@ -178,7 +178,7 @@ def vrp(
 
 @app.command("surface-summary")
 def surface_summary(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to summarize (YYYY-MM-DD), defaults to latest"
     ),
@@ -206,7 +206,7 @@ def surface_summary(
 
 @app.command("atm-vol")
 def atm_vol(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     start_date: Optional[str] = typer.Option(
         None, "--start", "-s", help="Start date (YYYY-MM-DD)"
     ),
@@ -254,7 +254,7 @@ def atm_vol(
 
 @app.command("term-structure")
 def term_structure(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to analyze (YYYY-MM-DD), defaults to latest"
     ),
@@ -309,7 +309,7 @@ def term_structure(
 
 @app.command()
 def skew(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     start_date: Optional[str] = typer.Option(
         None, "--start", "-s", help="Start date (YYYY-MM-DD)"
     ),
@@ -347,7 +347,7 @@ def skew(
 
 @app.command("iv-vs-rv")
 def iv_vs_rv(
-    symbol: str = typer.Argument("SPY", help="Symbol to analyze"),
+    symbol: str = typer.Argument("BTC", help="Symbol to analyze"),
     start_date: Optional[str] = typer.Option(
         None, "--start", "-s", help="Start date (YYYY-MM-DD)"
     ),

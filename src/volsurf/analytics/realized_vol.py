@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 from loguru import logger
 
+from volsurf.config.settings import get_settings
 from volsurf.database.connection import get_connection
 
 
@@ -165,8 +166,9 @@ def calculate_realized_skew(returns: np.ndarray) -> float:
 class RealizedVolCalculator:
     """Calculator for realized volatility metrics."""
 
-    def __init__(self, annualization_factor: int = 252):
-        self.annualization_factor = annualization_factor
+    def __init__(self, annualization_factor: Optional[int] = None):
+        settings = get_settings()
+        self.annualization_factor = annualization_factor or settings.annualization_days_per_year
 
     def get_price_history(
         self, symbol: str, end_date: date, lookback_days: int = 300

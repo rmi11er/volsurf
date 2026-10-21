@@ -10,6 +10,7 @@ import pandas as pd
 from loguru import logger
 
 from volsurf.analytics.realized_vol import RealizedVolCalculator
+from volsurf.config.settings import get_settings
 from volsurf.database.connection import get_connection
 
 
@@ -31,6 +32,7 @@ class VRPCalculator:
     """Calculator for Variance Risk Premium metrics."""
 
     def __init__(self, rv_calculator: Optional[RealizedVolCalculator] = None):
+        self.settings = get_settings()
         self.rv_calculator = rv_calculator or RealizedVolCalculator()
 
     def get_atm_implied_vol(
@@ -65,7 +67,7 @@ class VRPCalculator:
         if df.empty:
             return None
 
-        target_tte_years = target_tte_days / 252.0
+        target_tte_years = target_tte_days / float(self.settings.annualization_days_per_year)
 
         # If we have exact match
         tte_values = df["tte_years"].values

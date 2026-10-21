@@ -37,6 +37,11 @@ from volsurf.analytics.trade_journal import (
     TradeJournalManager,
     TradeResolution,
 )
+from volsurf.analytics.live_snapshot import (
+    LiveSnapshotManager,
+    LiveSnapshotResult,
+    intraday_result_to_snapshot,
+)
 from volsurf.analytics.macro_context import MacroContextCalculator
 from volsurf.analytics.variance_risk_premium import (
     VRPCalculator,
@@ -76,6 +81,10 @@ __all__ = [
     "TradeJournalManager",
     "TradeEntry",
     "TradeResolution",
+    # Live snapshot
+    "LiveSnapshotManager",
+    "LiveSnapshotResult",
+    "intraday_result_to_snapshot",
     # Macro context
     "MacroContextCalculator",
     # VRP

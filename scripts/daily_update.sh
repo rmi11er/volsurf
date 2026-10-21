@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 LOG_DIR="$PROJECT_DIR/logs"
 LOG_FILE="$LOG_DIR/daily_update_$(date +%Y%m%d).log"
-SYMBOL="${1:-SPY}"
+SYMBOL="${1:-BTC}"
 DATE="${2:-today}"
 
 # Create log directory if needed

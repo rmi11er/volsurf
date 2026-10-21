@@ -86,8 +86,8 @@ def main() -> None:
 
     if not available_symbols:
         st.warning("No fitted surfaces found. Please run data ingestion and fitting first.")
-        st.code("volsurf ingest backfill SPY --start 2024-01-01 --end 2024-12-31")
-        st.code("volsurf fit batch SPY --start 2024-01-01 --end 2024-12-31")
+        st.code("volsurf ingest daily BTC")
+        st.code("volsurf fit surfaces BTC")
         return
 
     symbol_options = [s["symbol"] for s in available_symbols]

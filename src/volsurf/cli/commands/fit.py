@@ -25,7 +25,7 @@ def parse_date(date_str: Optional[str]) -> Optional[date]:
 
 @app.command()
 def surfaces(
-    symbol: str = typer.Argument("SPY", help="Symbol to fit"),
+    symbol: str = typer.Argument("BTC", help="Symbol to fit"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to fit (YYYY-MM-DD), defaults to latest"
     ),
@@ -144,7 +144,7 @@ def surfaces(
 
 @app.command()
 def term_structure(
-    symbol: str = typer.Argument("SPY", help="Symbol to fit"),
+    symbol: str = typer.Argument("BTC", help="Symbol to fit"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to fit (YYYY-MM-DD), defaults to latest"
     ),
@@ -217,7 +217,7 @@ def term_structure(
 
 @app.command()
 def batch(
-    symbol: str = typer.Argument("SPY", help="Symbol to fit"),
+    symbol: str = typer.Argument("BTC", help="Symbol to fit"),
     start: str = typer.Option(..., "--start", "-s", help="Start date (YYYY-MM-DD)"),
     end: str = typer.Option(..., "--end", "-e", help="End date (YYYY-MM-DD)"),
     no_store: bool = typer.Option(
@@ -264,7 +264,7 @@ def batch(
 
 @app.command()
 def show(
-    symbol: str = typer.Argument("SPY", help="Symbol to display"),
+    symbol: str = typer.Argument("BTC", help="Symbol to display"),
     expiration: str = typer.Option(
         ..., "--expiration", "-e", help="Expiration date (YYYY-MM-DD)"
     ),
@@ -338,7 +338,7 @@ def show(
 
 @app.command()
 def compare(
-    symbol: str = typer.Argument("SPY", help="Symbol to compare"),
+    symbol: str = typer.Argument("BTC", help="Symbol to compare"),
     target_date: Optional[str] = typer.Option(
         None, "--date", "-d", help="Date to compare (YYYY-MM-DD), defaults to latest"
     ),
@@ -418,7 +418,7 @@ def compare(
 
 @app.command()
 def sabr(
-    symbol: str = typer.Argument("SPY", help="Symbol to fit"),
+    symbol: str = typer.Argument("BTC", help="Symbol to fit"),
     expiration: str = typer.Option(
         ..., "--expiration", "-e", help="Expiration date (YYYY-MM-DD)"
     ),

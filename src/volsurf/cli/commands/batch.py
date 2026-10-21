@@ -48,19 +48,27 @@ def ingest(
     """Backfill chains and underlying prices for all watchlist symbols."""
     from volsurf.config.settings import get_settings
     from volsurf.ingestion.pipeline import IngestionPipeline
-    from volsurf.ingestion.terminal import ensure_terminal_running
 
     settings = get_settings()
     start_date = _parse_date(start)
     end_date = _parse_date(end)
     symbol_list = symbols.split(",") if symbols else _get_watchlist()
 
-    if not settings.use_mock_data:
-        if not ensure_terminal_running():
-            console.print("[red]Failed to start Theta Terminal.[/red]")
-            raise typer.Exit(1)
-    else:
-        console.print("[yellow]Using mock data (no Theta username configured)[/yellow]")
+    provider = settings.normalized_data_provider
+    if provider == "theta":
+        from volsurf.ingestion.terminal import ensure_terminal_running
+
+        if not settings.use_mock_data:
+            if not ensure_terminal_running():
+                console.print("[red]Failed to start Theta Terminal.[/red]")
+                raise typer.Exit(1)
+        else:
+            console.print("[yellow]Using mock data (no Theta username configured)[/yellow]")
+    elif provider == "deribit":
+        console.print("[cyan]Using Deribit public API for crypto ingestion[/cyan]")
+        console.print(
+            "[yellow]Batch options ingestion is currently limited to today's UTC snapshot per symbol.[/yellow]"
+        )
 
     pipeline = IngestionPipeline()
     totals = {"days_processed": 0, "records_inserted": 0, "days_skipped": 0, "days_failed": 0}

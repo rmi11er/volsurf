@@ -9,6 +9,7 @@ from loguru import logger
 from volsurf.config.settings import Settings, get_settings
 from volsurf.database.connection import get_connection
 from volsurf.database.schema import init_schema
+from volsurf.ingestion.deribit_client import DeribitClient
 from volsurf.ingestion.filters import apply_liquidity_filters, validate_data_quality
 from volsurf.ingestion.theta_client import ThetaTerminalClient
 
@@ -26,7 +27,16 @@ class IngestionPipeline:
 
     def __init__(self, settings: Optional[Settings] = None):
         self.settings = settings or get_settings()
-        self.client = ThetaTerminalClient(self.settings)
+        self.client = self._build_client()
+
+    def _build_client(self) -> ThetaTerminalClient | DeribitClient:
+        """Create the active data client."""
+        provider = self.settings.normalized_data_provider
+        if provider == "theta":
+            return ThetaTerminalClient(self.settings)
+        if provider == "deribit":
+            return DeribitClient(self.settings)
+        raise ValueError(f"Unsupported data provider: {self.settings.data_provider}")
 
     def check_terminal(self) -> bool:
         """Check if the Theta Terminal is accessible."""
@@ -212,8 +222,12 @@ class IngestionPipeline:
 
         logger.info(f"Starting backfill for {symbol} from {start_date} to {end_date}")
 
-        # Check terminal status first
-        if not self.client.use_mock and not self.check_terminal():
+        # Check provider connectivity first
+        if (
+            self.settings.normalized_data_provider == "theta"
+            and not self.client.use_mock
+            and not self.check_terminal()
+        ):
             logger.error("Theta Terminal is not accessible. Please start the terminal.")
             return stats
 
